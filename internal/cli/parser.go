@@ -33,10 +33,12 @@ var knownActions = map[string]bool{
 //	/ip address add address=192.168.1.1/24 interface=ether1 comment=LAN
 //	/ip address remove numbers=0
 //	/ip address set numbers=0 address=10.0.0.1/24
+//	/ping 192.168.1.2 count=3
 //
 // Rules:
 //   - Path is everything before the action verb.
-//   - Action is the verb (print/add/remove/set/enable/disable).
+//   - Action is the verb (print/add/remove/set/enable/disable) or the first
+//     token if no known action is found (for command nodes like /ping).
 //   - Everything after action is space-separated key=value pairs.
 //   - Extra spaces are ignored.
 func Parse(input string) (ParsedCommand, error) {
@@ -51,8 +53,8 @@ func Parse(input string) (ParsedCommand, error) {
 		return ParsedCommand{}, fmt.Errorf("empty command")
 	}
 
-	// Find the action verb. Scan tokens from right to left so that we
-	// correctly identify the last token that is a known action.
+	// Find the action verb. Scan tokens from left to right to identify
+	// the first token that is a known action.
 	actionIdx := -1
 	for i, tok := range tokens {
 		if knownActions[tok] {
@@ -62,7 +64,43 @@ func Parse(input string) (ParsedCommand, error) {
 	}
 
 	if actionIdx == -1 {
-		return ParsedCommand{}, fmt.Errorf("no action verb found in command %q", input)
+		// No known action found — treat the entire input as a command
+		// invocation. The first token is the path, and remaining tokens
+		// are key=value parameters.
+		// If the first token starts with "/" it's a path; otherwise prepend "/".
+		path := tokens[0]
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		path = normalizePath(path)
+
+		params := make(map[string]string)
+		positionalSeen := false
+		for _, tok := range tokens[1:] {
+			if idx := strings.IndexByte(tok, '='); idx >= 0 {
+				key := tok[:idx]
+				value := tok[idx+1:]
+				if key != "" {
+					params[key] = value
+				}
+			} else {
+				// Token without "=" — treat as a positional parameter.
+				// The first positional token is mapped to "address" (for ping).
+				if !positionalSeen {
+					params["address"] = tok
+					positionalSeen = true
+				} else {
+					// Subsequent positional tokens become boolean flags
+					params[tok] = ""
+				}
+			}
+		}
+
+		return ParsedCommand{
+			Path:   path,
+			Action: tokens[0], // The command name, e.g. "ping"
+			Params: params,
+		}, nil
 	}
 
 	// Path is everything before the action verb

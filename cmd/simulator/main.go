@@ -16,6 +16,7 @@ import (
 	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
 	arpMod "github.com/Devaste/MikroLab/internal/modules/ip/arp"
 	routeMod "github.com/Devaste/MikroLab/internal/modules/ip/route"
+	pingMod "github.com/Devaste/MikroLab/internal/modules/ping"
 	"github.com/Devaste/MikroLab/internal/tree"
 )
 
@@ -104,11 +105,22 @@ func registerModules() (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ip/arp: %w", err)
 	}
 
-	// 7. Register modules in the lookup map
+	// 8. Create the ping command (registers under root, not /ip).
+	pingCmd, err := pingMod.New("/ping", "Ping", routeModule, arpModInstance)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create PingCommand: %w", err)
+	}
+
+	if err := tree.Root.AddChild("ping", pingCmd); err != nil {
+		return nil, fmt.Errorf("failed to register /ping: %w", err)
+	}
+
+	// 9. Register modules in the lookup map
 	modules["/interface"] = ifaceModule
 	modules["/ip/route"] = routeModule
 	modules["/ip/address"] = ipAddrModule
 	modules["/ip/arp"] = arpModInstance
+	modules["/ping"] = pingCmd
 	return modules, nil
 }
 

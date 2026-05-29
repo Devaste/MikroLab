@@ -12,7 +12,7 @@ import (
 // Execute parses and runs a single command against the configuration tree.
 //
 // It uses tree.GetNode to resolve the path, checks that the node implements
-// core.SettingsDirectory, and performs the requested action.
+// core.SettingsDirectory or core.Command, and performs the requested action.
 func Execute(cmd ParsedCommand) (string, error) {
 	// 1. Resolve the path
 	node := tree.GetNode(cmd.Path)
@@ -20,13 +20,18 @@ func Execute(cmd ParsedCommand) (string, error) {
 		return "", fmt.Errorf("failure: path %q not found", cmd.Path)
 	}
 
-	// 2. Assert that the node is a SettingsDirectory
+	// 2. Check if the node is a Command node (e.g., /ping)
+	if cmdNode, ok := node.(core.Command); ok {
+		return doCommand(cmdNode, cmd.Params)
+	}
+
+	// 3. Assert that the node is a SettingsDirectory
 	mod, ok := node.(core.SettingsDirectory)
 	if !ok {
 		return "", fmt.Errorf("failure: %q is not a settings directory", cmd.Path)
 	}
 
-	// 3. Perform the action
+	// 4. Perform the action
 	switch cmd.Action {
 	case "print":
 		return doPrint(mod), nil
@@ -55,6 +60,23 @@ func Execute(cmd ParsedCommand) (string, error) {
 	default:
 		return "", fmt.Errorf("failure: unknown action %q", cmd.Action)
 	}
+}
+
+// doCommand executes a Command node with the given parameters.
+func doCommand(cmd core.Command, params map[string]string) (string, error) {
+	args := stringMapToInterfaceMap(params)
+	result, err := cmd.Execute(args)
+	if err != nil {
+		return "", fmt.Errorf("failure: %v", err)
+	}
+	if result == nil {
+		return "", nil
+	}
+	// If result is a string, return it directly
+	if s, ok := result.(string); ok {
+		return s, nil
+	}
+	return fmt.Sprintf("%v\n", result), nil
 }
 
 // doPrint lists all entries and formats them as a table.
