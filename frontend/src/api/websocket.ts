@@ -16,11 +16,14 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
 }
 
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
 /**
- * WebSocket client for the MikroLab API.
+ * WebSocket client for the MikroLab API with auto-reconnect support.
  *
  * Usage:
  *   const client = new ApiClient();
+ *   client.onStatusChange((status) => console.log(status));
  *   await client.connect();
  *   const resp = await client.sendCommand('/ip/address/print');
  *   console.log(resp.result);
@@ -32,21 +35,99 @@ export class ApiClient {
   private ajv: Ajv;
   private validateRequest: ReturnType<Ajv['compile']> | null = null;
   private eventHandlers: Map<string, Set<(payload: unknown) => void>> = new Map();
+  private status: ConnectionStatus = 'disconnected';
+  private statusHandlers: Set<(status: ConnectionStatus) => void> = new Set();
+  private url: string = WS_URL;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private shouldReconnect = false;
 
-  constructor() {
+  constructor(autoReconnect = true) {
     this.ajv = new Ajv();
+    this.shouldReconnect = autoReconnect;
+  }
+
+  /**
+   * Register a handler for connection status changes.
+   */
+  onStatusChange(handler: (status: ConnectionStatus) => void): () => void {
+    this.statusHandlers.add(handler);
+    return () => {
+      this.statusHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * Get the current connection status.
+   */
+  getStatus(): ConnectionStatus {
+    return this.status;
+  }
+
+  private setStatus(newStatus: ConnectionStatus): void {
+    this.status = newStatus;
+    for (const handler of this.statusHandlers) {
+      try {
+        handler(newStatus);
+      } catch (err) {
+        console.error('Status handler error:', err);
+      }
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.shouldReconnect) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.setStatus('error');
+      return;
+    }
+    this.reconnectAttempts++;
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 30000);
+    this.reconnectTimer = setTimeout(() => {
+      this.internalConnect();
+    }, delay);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
   }
 
   /**
    * Connect to the WebSocket server and perform the version handshake.
    */
-  connect(url: string = WS_URL): Promise<void> {
+  connect(url?: string): Promise<void> {
+    if (url) {
+      this.url = url;
+    }
+    this.shouldReconnect = true;
+    this.reconnectAttempts = 0;
+    this.clearReconnectTimer();
+    return this.internalConnect();
+  }
+
+  private internalConnect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(url);
+      // Reject any existing pending requests
+      for (const [, pending] of this.pending) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('Reconnecting'));
+      }
+      this.pending.clear();
+
+      this.ws = new WebSocket(this.url);
+      this.setStatus('connecting');
 
       this.ws.onopen = () => {
+        this.setStatus('connected');
+        this.reconnectAttempts = 0;
         // Send version handshake
         this.ws!.send(JSON.stringify({ version: API_VERSION }));
+        // Resolve if connect() was called directly and handshake succeeded
+        resolve();
       };
 
       this.ws.onmessage = (event: MessageEvent) => {
@@ -55,6 +136,7 @@ export class ApiClient {
 
           // Check if it's a handshake error
           if (data.error && data.id === -1) {
+            this.setStatus('error');
             reject(new Error(data.error));
             this.ws?.close();
             return;
@@ -78,22 +160,27 @@ export class ApiClient {
         }
       };
 
-      this.ws.onerror = (event: Event) => {
+      this.ws.onerror = () => {
+        this.setStatus('error');
         reject(new Error('WebSocket connection failed'));
       };
 
       this.ws.onclose = () => {
+        this.setStatus('disconnected');
         // Reject all pending requests
         for (const [, pending] of this.pending) {
           clearTimeout(pending.timer);
           pending.reject(new Error('Connection closed'));
         }
         this.pending.clear();
+        // Schedule reconnect
+        this.scheduleReconnect();
       };
 
       // Timeout for connection + handshake
       setTimeout(() => {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          this.setStatus('error');
           reject(new Error('Connection timeout'));
         }
       }, 5000);
@@ -157,13 +244,16 @@ export class ApiClient {
   }
 
   /**
-   * Disconnect from the WebSocket server.
+   * Disconnect from the WebSocket server and stop reconnecting.
    */
   disconnect(): void {
+    this.shouldReconnect = false;
+    this.clearReconnectTimer();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
     }
+    this.setStatus('disconnected');
   }
 
   /**
