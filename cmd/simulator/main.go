@@ -14,6 +14,8 @@ import (
 	"github.com/Devaste/MikroLab/internal/config"
 	"github.com/Devaste/MikroLab/internal/core"
 	interfaceMod "github.com/Devaste/MikroLab/internal/modules/interface"
+	bridgeMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge"
+	bridgePortMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge_port"
 	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
 	arpMod "github.com/Devaste/MikroLab/internal/modules/ip/arp"
 	routeMod "github.com/Devaste/MikroLab/internal/modules/ip/route"
@@ -105,7 +107,57 @@ func registerModulesOnTree(root *tree.TreeNode) (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ip/arp: %w", err)
 	}
 
-	// 6. Create the ping command (registers under root, not /ip).
+	// 6. Load bridge schema and create the bridge module.
+	bridgeSchemaData, err := os.ReadFile("internal/modules/interface/bridge/schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read bridge schema: %w", err)
+	}
+	bridgeSchema := &config.ModuleSchema{}
+	if err := json.Unmarshal(bridgeSchemaData, bridgeSchema); err != nil {
+		return nil, fmt.Errorf("failed to parse bridge schema: %w", err)
+	}
+
+	bridgeModule, err := bridgeMod.New(bridgeSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create BridgeModule: %w", err)
+	}
+
+	// Register as a child of /interface (RoS uses /interface bridge)
+	ifaceDir, _ := root.Child("interface")
+	ifaceNode, ok := ifaceDir.(core.Directory)
+	if !ok {
+		return nil, fmt.Errorf("/interface is not a Directory")
+	}
+	if err := ifaceNode.AddChild("bridge", bridgeModule); err != nil {
+		return nil, fmt.Errorf("failed to register /interface/bridge: %w", err)
+	}
+
+	// 7. Load bridge port schema and create the bridge port module.
+	bridgePortSchemaData, err := os.ReadFile("internal/modules/interface/bridge_port/schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read bridge port schema: %w", err)
+	}
+	bridgePortSchema := &config.ModuleSchema{}
+	if err := json.Unmarshal(bridgePortSchemaData, bridgePortSchema); err != nil {
+		return nil, fmt.Errorf("failed to parse bridge port schema: %w", err)
+	}
+
+	bridgePortModule, err := bridgePortMod.New(
+		bridgePortSchema.Path,
+		bridgePortSchema.Title,
+		ifaceModule,
+		bridgeModule,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create BridgePortModule: %w", err)
+	}
+
+	// Register as a child of /interface
+	if err := ifaceNode.AddChild("bridge_port", bridgePortModule); err != nil {
+		return nil, fmt.Errorf("failed to register /interface/bridge_port: %w", err)
+	}
+
+	// 8. Create the ping command (registers under root, not /ip).
 	pingCmd, err := pingMod.New("/ping", "Ping", routeModule, arpModInstance)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PingCommand: %w", err)
@@ -115,8 +167,11 @@ func registerModulesOnTree(root *tree.TreeNode) (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ping: %w", err)
 	}
 
-	// 7. Register modules in the lookup map
+	// 9. Register modules in the lookup map
 	modules["/interface"] = ifaceModule
+	modules["/interface/bridge"] = bridgeModule
+	modules["/interface/bridge/port"] = bridgePortModule
+	modules["/interface/bridge_port"] = bridgePortModule
 	modules["/ip/route"] = routeModule
 	modules["/ip/address"] = ipAddrModule
 	modules["/ip/arp"] = arpModInstance
@@ -142,7 +197,7 @@ func populateDeviceTree(dev *topology.Device) error {
 // ---------------------------------------------------------------------------
 
 // runREPL starts an interactive RouterOS-style command loop.
-func runREPL() {
+func runREPL(topo *topology.Topology) {
 	scanner := bufio.NewScanner(os.Stdin)
 
 	// Set up a channel to catch Ctrl+C (SIGINT)
@@ -231,6 +286,14 @@ func main() {
 		return
 	}
 
+	// Set up bridge handler on topology
+	if bridgeNode, ok := modules["/interface/bridge"]; ok {
+		if bridgeHandler, ok := bridgeNode.(topology.BridgeHandler); ok {
+			topo.SetBridgeHandler(bridgeHandler)
+			fmt.Println("Bridge handler registered on topology manager")
+		}
+	}
+
 	fmt.Println("=== MikroLab Configuration Tree ===")
 	fmt.Println()
 
@@ -286,7 +349,7 @@ func main() {
 	}()
 
 	// Start the REPL
-	runREPL()
+	runREPL(topo)
 
 	// Graceful shutdown
 	fmt.Println("Shutting down...")

@@ -1,0 +1,99 @@
+{
+  "path": "/interface bridge port",
+  "type": "list",
+  "title": "Bridge Port",
+  "description": "Bridge port configuration and management.",
+  "flags": [
+    {
+      "letter": "X",
+      "name": "disabled",
+      "description": "Port is disabled."
+    },
+    {
+      "letter": "R",
+      "name": "running",
+      "description": "Port is running."
+    },
+    {
+      "letter": "D",
+      "name": "dynamic",
+      "description": "Port is created dynamically."
+    }
+  ],
+  "schema": {
+    "interface": {
+      "type": "string",
+      "required": true,
+      "description": "Name of an existing physical interface."
+    },
+    "bridge": {
+      "type": "string",
+      "required": true,
+      "description": "Name of an existing bridge."
+    },
+    "path-cost": {
+      "type": "integer",
+      "default": 10,
+      "description": "STP path cost (stored for future use)."
+    },
+    "priority": {
+      "type": "integer",
+      "default": 128,
+      "description": "STP port priority (stored for future use)."
+    },
+    "edge": {
+      "type": "string",
+      "default": "auto",
+      "description": "Edge mode: auto, yes, no."
+    },
+    "point-to-point": {
+      "type": "string",
+      "default": "auto",
+      "description": "Point-to-point mode: auto, yes, no."
+    },
+    "disabled": {
+      "type": "bool",
+      "default": false,
+      "description": "Whether the port is disabled."
+    },
+    "status": {
+      "type": "string",
+      "readOnly": true,
+      "description": "Port status: in-bridge, inactive."
+    }
+  },
+  "actions": {
+    "add": {
+      "parameters": ["interface", "bridge", "path-cost", "priority", "edge", "point-to-point", "disabled"],
+      "validators": ["interface_exists", "bridge_exists", "not_duplicate_port"],
+      "description": "Add a new bridge port."
+    },
+    "set": {
+      "parameters": ["numbers", "interface", "bridge", "path-cost", "priority", "edge", "point-to-point", "disabled"],
+      "validators": ["entry_exists", "interface_exists", "bridge_exists"],
+      "description": "Modify properties of existing bridge port(s)."
+    },
+    "remove": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists", "not_dynamic"],
+      "description": "Delete bridge port(s)."
+    },
+    "print": {
+      "parameters": ["where", "detail", "follow"],
+      "output_formatter": "table",
+      "description": "Print bridge port list."
+    }
+  },
+  "defaults": {
+    "path-cost": 10,
+    "priority": 128,
+    "edge": "auto",
+    "point-to-point": "auto",
+    "disabled": false
+  },
+  "constraints": {
+    "interface_exists": "Interface must exist in /interface.",
+    "bridge_exists": "Bridge must exist in /interface bridge.",
+    "not_duplicate_port": "An interface can be in only one bridge at a time."
+  }
+}

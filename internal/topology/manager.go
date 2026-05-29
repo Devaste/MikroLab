@@ -8,13 +8,35 @@ import (
 	"github.com/Devaste/MikroLab/internal/tree"
 )
 
+// BridgeHandler defines the interface for bridge packet processing.
+// The bridge module implements this to handle L2 forwarding.
+type BridgeHandler interface {
+	// GetBridgeByPort returns the bridge name that contains the given port.
+	GetBridgeByPort(portName string) (bridgeName string, found bool)
+
+	// HandlePacket processes a packet arriving on a bridged interface.
+	HandlePacket(bridgeName string, inPort string, packet Packet) []ForwardAction
+
+	// GetBridgePorts returns all port names for a bridge.
+	GetBridgePorts(bridgeName string) []string
+
+	// AddMAC adds/updates a MAC address in the bridge's forwarding table.
+	AddMAC(bridgeName, mac, portName string)
+}
+
+// ForwardAction represents a forwarding decision from the bridge.
+type ForwardAction struct {
+	OutIface string
+}
+
 // Topology manages a collection of simulated RouterOS devices and their
 // virtual interconnections (links).
 type Topology struct {
-	devices map[string]*Device
-	links   map[string]*Link // link ID -> Link
-	mu      sync.RWMutex
-	nextID  int
+	devices       map[string]*Device
+	links         map[string]*Link // link ID -> Link
+	mu            sync.RWMutex
+	nextID        int
+	bridgeHandler BridgeHandler
 }
 
 // Link represents a virtual cable connecting two interfaces on two devices.
@@ -33,6 +55,13 @@ func NewTopology() *Topology {
 		links:   make(map[string]*Link),
 		nextID:  1,
 	}
+}
+
+// SetBridgeHandler sets the bridge handler for L2 forwarding.
+func (t *Topology) SetBridgeHandler(h BridgeHandler) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bridgeHandler = h
 }
 
 // Device returns the device with the given ID, or nil if not found.
@@ -69,7 +98,6 @@ func (t *Topology) CreateDevice(name string) (*Device, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Generate a unique ID
 	id := fmt.Sprintf("device-%d", t.nextID)
 	t.nextID++
 
@@ -83,7 +111,7 @@ func (t *Topology) CreateDevice(name string) (*Device, error) {
 	return device, nil
 }
 
-// CreateDeviceWithID creates a device with a specific ID (used for the default device).
+// CreateDeviceWithID creates a device with a specific ID.
 func (t *Topology) CreateDeviceWithID(id, name string) (*Device, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -111,7 +139,6 @@ func (t *Topology) DeleteDevice(id string) error {
 		return fmt.Errorf("device %q not found", id)
 	}
 
-	// Remove all links involving this device
 	for linkID, link := range t.links {
 		if link.DeviceA == id || link.DeviceB == id {
 			delete(t.links, linkID)
@@ -129,7 +156,6 @@ func (t *Topology) Connect(deviceA, ifaceA, deviceB, ifaceB string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	// Verify devices exist
 	devA, okA := t.devices[deviceA]
 	devB, okB := t.devices[deviceB]
 	if !okA {
@@ -145,7 +171,6 @@ func (t *Topology) Connect(deviceA, ifaceA, deviceB, ifaceB string) error {
 		return fmt.Errorf("interface names are required")
 	}
 
-	// Check no existing link uses these interfaces
 	for _, link := range t.links {
 		if (link.DeviceA == deviceA && link.InterfaceA == ifaceA) ||
 			(link.DeviceB == deviceA && link.InterfaceB == ifaceA) {
@@ -186,83 +211,187 @@ func (t *Topology) Disconnect(linkID string) error {
 	return nil
 }
 
-// SendPacket sends a packet from a device out through one of its interfaces.
-// The topology manager routes it to the connected device.
-func (t *Topology) SendPacket(srcDeviceID, outIface string, packet Packet) error {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	// Find which link connects this device+interface to another
-	var targetDeviceID, recvIface string
+// findLinkForDevice finds the link that connects this device+interface to another device.
+func (t *Topology) findLinkForDevice(srcDeviceID, outIface string) (targetDeviceID, recvIface string) {
 	for _, link := range t.links {
 		if link.DeviceA == srcDeviceID && link.InterfaceA == outIface {
-			targetDeviceID = link.DeviceB
-			recvIface = link.InterfaceB
-			break
+			return link.DeviceB, link.InterfaceB
 		}
 		if link.DeviceB == srcDeviceID && link.InterfaceB == outIface {
-			targetDeviceID = link.DeviceA
-			recvIface = link.InterfaceA
-			break
+			return link.DeviceA, link.InterfaceA
 		}
 	}
+	return "", ""
+}
+
+// routePacket forwards a packet directly to the connected device without
+// re-processing it through ICMP echo generation. This prevents infinite loops.
+func (t *Topology) routePacket(srcDeviceID, outIface string, packet Packet) error {
+	t.mu.RLock()
+	targetDeviceID, recvIface := t.findLinkForDevice(srcDeviceID, outIface)
+	t.mu.RUnlock()
 
 	if targetDeviceID == "" {
 		return fmt.Errorf("no link found for device %s interface %s", srcDeviceID, outIface)
 	}
 
-	// Deliver the packet to the target device
+	t.mu.RLock()
 	targetDevice, exists := t.devices[targetDeviceID]
+	t.mu.RUnlock()
+
 	if !exists {
 		return fmt.Errorf("target device %s not found", targetDeviceID)
 	}
 
-	// Apply packet routing logic
-	t.deliverPacket(targetDevice, recvIface, packet)
+	// Forward to the connected device (just log, no more ICMP processing)
+	log.Printf("[topology] Forwarding packet to %s (%s) on interface %s: %s -> %s (proto=%d)",
+		targetDevice.Name, targetDevice.ID, recvIface, packet.SrcIP, packet.DstIP, packet.Protocol)
+
+	// Perform MAC learning on the receiving interface if bridge handler is active
+	t.mu.RLock()
+	bridgeHandler := t.bridgeHandler
+	t.mu.RUnlock()
+	if bridgeHandler != nil {
+		if packet.Eth.SrcMAC != "" {
+			if bridgeName, found := bridgeHandler.GetBridgeByPort(recvIface); found {
+				bridgeHandler.AddMAC(bridgeName, packet.Eth.SrcMAC, recvIface)
+			}
+		}
+	}
+
 	return nil
 }
 
-// deliverPacket delivers a packet to a device on the specified interface.
-// For MVP, it handles ICMP echo requests by generating a reply.
-func (t *Topology) deliverPacket(device *Device, recvIface string, packet Packet) {
+// SendPacket sends a packet from a device out through one of its interfaces.
+func (t *Topology) SendPacket(srcDeviceID, outIface string, packet Packet) error {
+	t.mu.RLock()
+	bridgeHandler := t.bridgeHandler
+	t.mu.RUnlock()
+
+	// Check if this interface belongs to a bridge
+	if bridgeHandler != nil {
+		if bridgeName, found := bridgeHandler.GetBridgeByPort(outIface); found {
+			// The bridge handler processes the packet
+			actions := bridgeHandler.HandlePacket(bridgeName, outIface, packet)
+
+			// Forward to all determined output interfaces
+			for _, action := range actions {
+				t.mu.RLock()
+				targetDeviceID, recvIface := t.findLinkForDevice(srcDeviceID, action.OutIface)
+				t.mu.RUnlock()
+
+				if targetDeviceID == "" {
+					log.Printf("[topology] No link found for bridge port %s on device %s",
+						action.OutIface, srcDeviceID)
+					continue
+				}
+
+				t.mu.RLock()
+				targetDevice, exists := t.devices[targetDeviceID]
+				t.mu.RUnlock()
+
+				if !exists {
+					log.Printf("[topology] Target device %s not found", targetDeviceID)
+					continue
+				}
+
+				// Route the packet directly to the target device
+				log.Printf("[topology] Bridge forwarding packet to %s (%s) on interface %s: %s -> %s (proto=%d)",
+					targetDevice.Name, targetDevice.ID, recvIface, packet.SrcIP, packet.DstIP, packet.Protocol)
+
+				// Perform MAC learning on the receiving side
+				t.mu.RLock()
+				bridgeHandler2 := t.bridgeHandler
+				t.mu.RUnlock()
+				if bridgeHandler2 != nil {
+					if packet.Eth.SrcMAC != "" {
+						if bridgeName2, found := bridgeHandler2.GetBridgeByPort(recvIface); found {
+							bridgeHandler2.AddMAC(bridgeName2, packet.Eth.SrcMAC, recvIface)
+						}
+					}
+				}
+			}
+			return nil
+		}
+	}
+
+	// Normal (non-bridge) forwarding
+	t.mu.RLock()
+	targetDeviceID, recvIface := t.findLinkForDevice(srcDeviceID, outIface)
+	t.mu.RUnlock()
+
+	if targetDeviceID == "" {
+		return fmt.Errorf("no link found for device %s interface %s", srcDeviceID, outIface)
+	}
+
+	t.mu.RLock()
+	targetDevice, exists := t.devices[targetDeviceID]
+	t.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("target device %s not found", targetDeviceID)
+	}
+
+	// Apply routing logic (only process ICMP echo requests once)
+	t.handleICMPPacket(targetDevice, recvIface, packet)
+	return nil
+}
+
+// handleICMPPacket processes an ICMP echo request and generates a single reply.
+func (t *Topology) handleICMPPacket(device *Device, recvIface string, packet Packet) {
 	log.Printf("[topology] Delivering packet to %s (%s) on interface %s: %s -> %s (proto=%d)",
 		device.Name, device.ID, recvIface, packet.SrcIP, packet.DstIP, packet.Protocol)
 
-	// For MVP: handle ICMP echo requests (protocol 1)
-	if packet.Protocol == 1 {
-		// This is an ICMP packet - generate an echo reply
+	// Perform MAC learning
+	t.mu.RLock()
+	bridgeHandler := t.bridgeHandler
+	t.mu.RUnlock()
+
+	if bridgeHandler != nil {
+		if packet.Eth.SrcMAC != "" {
+			if bridgeName, found := bridgeHandler.GetBridgeByPort(recvIface); found {
+				bridgeHandler.AddMAC(bridgeName, packet.Eth.SrcMAC, recvIface)
+			}
+		}
+	}
+
+	// Only generate a reply for ICMP Echo Requests (type 8), not replies (type 0)
+	if packet.Protocol == 1 && len(packet.Payload) > 0 && packet.Payload[0] == 8 {
 		reply := Packet{
+			Eth: EthernetFrame{
+				SrcMAC:    packet.Eth.DstMAC,
+				DstMAC:    packet.Eth.SrcMAC,
+				EtherType: packet.Eth.EtherType,
+				Payload:   packet.Eth.Payload,
+			},
 			SrcIP:    packet.DstIP,
 			DstIP:    packet.SrcIP,
 			Protocol: 1,
 			Payload:  createICMPReply(packet.Payload),
 		}
+
 		log.Printf("[topology] Generated ICMP reply: %s -> %s", reply.SrcIP, reply.DstIP)
 
-		// Send reply back through the topology
-		// We need to find the outgoing interface on the target device
-		// For simplicity, we look up the interface that matches our routing
-		err := t.sendReplyBack(device.ID, recvIface, reply)
+		// Send reply back directly (no further ICMP processing)
+		err := t.routePacketBack(device.ID, recvIface, reply)
 		if err != nil {
 			log.Printf("[topology] Failed to send ICMP reply: %v", err)
 		}
 	}
 }
 
-// sendReplyBack sends the reply packet back through the topology.
-func (t *Topology) sendReplyBack(deviceID, inIface string, reply Packet) error {
-	// The reply needs to go out on the same interface it came in on
-	// Find the link on the other side
+// routePacketBack sends the reply packet back directly.
+func (t *Topology) routePacketBack(deviceID, inIface string, reply Packet) error {
 	for _, link := range t.links {
 		if link.DeviceA == deviceID && link.InterfaceA == inIface {
 			log.Printf("[topology] Routing reply from %s:%s to %s:%s",
 				deviceID, inIface, link.DeviceB, link.InterfaceB)
-			return nil
+			return t.routePacket(deviceID, inIface, reply)
 		}
 		if link.DeviceB == deviceID && link.InterfaceB == inIface {
 			log.Printf("[topology] Routing reply from %s:%s to %s:%s",
 				deviceID, inIface, link.DeviceA, link.InterfaceA)
-			return nil
+			return t.routePacket(deviceID, inIface, reply)
 		}
 	}
 	return fmt.Errorf("no link found for reply on device %s interface %s", deviceID, inIface)
@@ -270,10 +399,8 @@ func (t *Topology) sendReplyBack(deviceID, inIface string, reply Packet) error {
 
 // createICMPReply creates a dummy ICMP echo reply payload from an echo request.
 func createICMPReply(requestPayload []byte) []byte {
-	// For MVP, just return a small reply marker
 	reply := make([]byte, len(requestPayload))
 	copy(reply, requestPayload)
-	// Flip the first byte to mark as reply
 	if len(reply) > 0 {
 		reply[0] = 0 // ICMP Echo Reply type
 	}
@@ -281,7 +408,6 @@ func createICMPReply(requestPayload []byte) []byte {
 }
 
 // NewTreeForDevice creates a new empty configuration tree suitable for a device.
-// The caller is responsible for populating it with modules.
 func NewTreeForDevice() *tree.TreeNode {
 	return tree.NewTree()
 }

@@ -1,0 +1,108 @@
+{
+  "path": "/interface bridge",
+  "type": "list",
+  "title": "Bridge",
+  "description": "Bridge interface configuration and management.",
+  "flags": [
+    {
+      "letter": "X",
+      "name": "disabled",
+      "description": "Bridge is disabled."
+    },
+    {
+      "letter": "R",
+      "name": "running",
+      "description": "Bridge is running (at least one port up)."
+    },
+    {
+      "letter": "D",
+      "name": "dynamic",
+      "description": "Bridge is created dynamically."
+    }
+  ],
+  "schema": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "description": "Unique bridge name."
+    },
+    "mtu": {
+      "type": "integer",
+      "default": 1500,
+      "description": "Maximum Transmission Unit."
+    },
+    "ageing-time": {
+      "type": "string",
+      "default": "5m",
+      "description": "MAC address ageing time (duration string, e.g., 5m, 10s)."
+    },
+    "disabled": {
+      "type": "bool",
+      "default": false,
+      "description": "Whether the bridge is disabled."
+    },
+    "protocol-mode": {
+      "type": "string",
+      "default": "none",
+      "description": "Protocol mode: none, stp, rstp, mstp."
+    },
+    "vlan-filtering": {
+      "type": "bool",
+      "default": false,
+      "description": "Whether VLAN filtering is enabled."
+    },
+    "mac-address": {
+      "type": "macAddr",
+      "readOnly": true,
+      "description": "MAC address of the bridge (generated)."
+    },
+    "running": {
+      "type": "bool",
+      "readOnly": true,
+      "description": "Whether the bridge is running."
+    }
+  },
+  "actions": {
+    "add": {
+      "parameters": ["name", "mtu", "ageing-time", "disabled", "protocol-mode", "vlan-filtering"],
+      "validators": ["unique_name"],
+      "description": "Add a new bridge."
+    },
+    "set": {
+      "parameters": ["numbers", "name", "mtu", "ageing-time", "disabled", "protocol-mode", "vlan-filtering"],
+      "validators": ["entry_exists", "unique_name"],
+      "description": "Modify properties of existing bridge(s)."
+    },
+    "remove": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists", "not_dynamic"],
+      "description": "Delete bridge(s)."
+    },
+    "print": {
+      "parameters": ["where", "detail", "follow"],
+      "output_formatter": "table",
+      "description": "Print bridge list."
+    },
+    "enable": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists"],
+      "description": "Enable bridge(s)."
+    },
+    "disable": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists"],
+      "description": "Disable bridge(s)."
+    }
+  },
+  "defaults": {
+    "mtu": 1500,
+    "ageing-time": "5m",
+    "disabled": false,
+    "protocol-mode": "none",
+    "vlan-filtering": false
+  },
+  "constraints": {
+    "unique_name": "Bridge name must be unique.",
+    "mtu_range": "MTU must be between 68 and 1500."
+  }
+}

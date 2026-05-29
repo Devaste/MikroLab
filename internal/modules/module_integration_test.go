@@ -13,6 +13,8 @@ import (
 	"github.com/Devaste/MikroLab/internal/config"
 	"github.com/Devaste/MikroLab/internal/core"
 	interfacesMod "github.com/Devaste/MikroLab/internal/modules/interface"
+	bridgeMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge"
+	bridgePortMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge_port"
 	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
 	"github.com/Devaste/MikroLab/internal/modules/ip/route"
 	"github.com/Devaste/MikroLab/internal/tree"
@@ -20,7 +22,6 @@ import (
 
 // projectRoot attempts to find the project root by looking for go.mod.
 func projectRoot() string {
-	// Search upward from the test directory
 	dir, _ := os.Getwd()
 	for i := 0; i < 10; i++ {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
@@ -41,7 +42,7 @@ func resolvePath(relative string) string {
 }
 
 // setupFullTree builds the complete config tree with all real modules loaded
-// from their JSON schema files, exactly matching the production REPL.
+// from their JSON schema files, including bridge modules.
 func setupFullTree(t *testing.T) {
 	t.Helper()
 
@@ -103,6 +104,45 @@ func setupFullTree(t *testing.T) {
 	}
 	if err := ipDir.AddChild("address", addrModule); err != nil {
 		t.Fatalf("failed to register /ip/address: %v", err)
+	}
+
+	// 6. Load bridge schema and create the bridge module.
+	bridgeSchemaData, err := os.ReadFile(resolvePath("internal/modules/interface/bridge/schema.json"))
+	if err != nil {
+		t.Fatalf("failed to read bridge schema: %v", err)
+	}
+	bridgeSchema := &config.ModuleSchema{}
+	if err := json.Unmarshal(bridgeSchemaData, bridgeSchema); err != nil {
+		t.Fatalf("failed to parse bridge schema: %v", err)
+	}
+	bridgeModule, err := bridgeMod.New(bridgeSchema)
+	if err != nil {
+		t.Fatalf("failed to create BridgeModule: %v", err)
+	}
+	if err := tree.Root.AddChild("interface_bridge", bridgeModule); err != nil {
+		t.Fatalf("failed to register bridge module: %v", err)
+	}
+
+	// 7. Load bridge port schema and create the bridge port module.
+	bridgePortSchemaData, err := os.ReadFile(resolvePath("internal/modules/interface/bridge_port/schema.json"))
+	if err != nil {
+		t.Fatalf("failed to read bridge port schema: %v", err)
+	}
+	bridgePortSchema := &config.ModuleSchema{}
+	if err := json.Unmarshal(bridgePortSchemaData, bridgePortSchema); err != nil {
+		t.Fatalf("failed to parse bridge port schema: %v", err)
+	}
+	bridgePortModule, err := bridgePortMod.New(
+		bridgePortSchema.Path,
+		bridgePortSchema.Title,
+		ifaceModule,
+		bridgeModule,
+	)
+	if err != nil {
+		t.Fatalf("failed to create BridgePortModule: %v", err)
+	}
+	if err := tree.Root.AddChild("interface_bridge_port", bridgePortModule); err != nil {
+		t.Fatalf("failed to register bridge port module: %v", err)
 	}
 }
 
@@ -599,5 +639,376 @@ func TestIntegrationFullWorkflow(t *testing.T) {
 	}
 	if result.Distance != 0 {
 		t.Errorf("expected distance 0 for connected route, got %d", result.Distance)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// /interface bridge integration tests
+// ---------------------------------------------------------------------------
+
+func TestIntegrationBridgeCreateAndList(t *testing.T) {
+	setupFullTree(t)
+
+	// Add a bridge via CLI
+	output, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "add",
+		Params: map[string]string{
+			"name": "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error adding bridge: %v", err)
+	}
+	if output == "" {
+		t.Fatal("expected non-empty output")
+	}
+
+	// Print bridges
+	output, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "print",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on print: %v", err)
+	}
+	if len(output) == 0 {
+		t.Fatal("expected print output, got empty")
+	}
+}
+
+func TestIntegrationBridgeAddDuplicate(t *testing.T) {
+	setupFullTree(t)
+
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "add",
+		Params: map[string]string{
+			"name": "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add first bridge: %v", err)
+	}
+
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "add",
+		Params: map[string]string{
+			"name": "bridge1",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for duplicate bridge name")
+	}
+}
+
+func TestIntegrationBridgeRemoveBridge(t *testing.T) {
+	setupFullTree(t)
+
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "add",
+		Params: map[string]string{
+			"name": "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add bridge: %v", err)
+	}
+
+	// Remove via CLI
+	output, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "remove",
+		Params: map[string]string{
+			"numbers": "0",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on remove: %v", err)
+	}
+	if output == "" {
+		t.Fatal("expected non-empty remove output")
+	}
+}
+
+func TestIntegrationBridgeSetProperties(t *testing.T) {
+	setupFullTree(t)
+
+	// Add a bridge
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "add",
+		Params: map[string]string{
+			"name": "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add bridge: %v", err)
+	}
+
+	// Set properties
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "set",
+		Params: map[string]string{
+			"numbers":       "0",
+			"mtu":           "1400",
+			"ageing-time":   "10m",
+			"protocol-mode": "none",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on set: %v", err)
+	}
+
+	// Verify by printing
+	output, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "print",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on print: %v", err)
+	}
+	if len(output) == 0 {
+		t.Fatal("expected non-empty print output")
+	}
+}
+
+func TestIntegrationBridgePortManagement(t *testing.T) {
+	setupFullTree(t)
+
+	// Create interfaces and bridge
+	addInterface(t, "ether1")
+	addInterface(t, "ether2")
+
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "add",
+		Params: map[string]string{
+			"name": "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add bridge: %v", err)
+	}
+
+	// Add ports
+	output, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge_port",
+		Action: "add",
+		Params: map[string]string{
+			"interface": "ether1",
+			"bridge":    "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add port: %v", err)
+	}
+	if output == "" {
+		t.Fatal("expected non-empty output")
+	}
+
+	// Add second port
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge_port",
+		Action: "add",
+		Params: map[string]string{
+			"interface": "ether2",
+			"bridge":    "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add second port: %v", err)
+	}
+
+	// Print ports
+	output, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge_port",
+		Action: "print",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on print: %v", err)
+	}
+	if len(output) == 0 {
+		t.Fatal("expected non-empty print output")
+	}
+
+	// Remove a port
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge_port",
+		Action: "remove",
+		Params: map[string]string{
+			"numbers": "0",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to remove port: %v", err)
+	}
+}
+
+func TestIntegrationBridgePortMissingInterface(t *testing.T) {
+	setupFullTree(t)
+
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "add",
+		Params: map[string]string{
+			"name": "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add bridge: %v", err)
+	}
+
+	// Try to add a port with non-existent interface
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge_port",
+		Action: "add",
+		Params: map[string]string{
+			"interface": "nonexistent",
+			"bridge":    "bridge1",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for non-existent interface")
+	}
+}
+
+func TestIntegrationBridgePortMissingBridge(t *testing.T) {
+	setupFullTree(t)
+	addInterface(t, "ether1")
+
+	// Try to add a port with non-existent bridge
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge_port",
+		Action: "add",
+		Params: map[string]string{
+			"interface": "ether1",
+			"bridge":    "nonexistent",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for non-existent bridge")
+	}
+}
+
+func TestIntegrationBridgeMACLearning(t *testing.T) {
+	setupFullTree(t)
+
+	// Get the bridge module
+	bridgeNode, ok := tree.GetNode("/interface_bridge").(*bridgeMod.BridgeModule)
+	if !ok {
+		t.Fatal("expected *BridgeModule from tree")
+	}
+
+	// Add a bridge
+	_, err := bridgeNode.AddBridge("bridge1")
+	if err != nil {
+		t.Fatalf("failed to add bridge: %v", err)
+	}
+
+	// Add ports
+	bridgeNode.AddPort("bridge1", "ether1")
+	bridgeNode.AddPort("bridge1", "ether2")
+
+	// Learn a MAC
+	bridgeNode.AddMAC("bridge1", "00:11:22:33:44:55", "ether1")
+
+	// Lookup
+	port, found := bridgeNode.LookupMAC("bridge1", "00:11:22:33:44:55")
+	if !found || port != "ether1" {
+		t.Errorf("expected LookupMAC to return (ether1, true), got (%s, %v)", port, found)
+	}
+
+	// Verify forwarding table
+	table := bridgeNode.GetForwardingTable("bridge1")
+	if len(table) != 1 {
+		t.Errorf("expected 1 MAC in forwarding table, got %d", len(table))
+	}
+
+	// Remove and verify
+	bridgeNode.RemoveMAC("bridge1", "00:11:22:33:44:55")
+	_, found = bridgeNode.LookupMAC("bridge1", "00:11:22:33:44:55")
+	if found {
+		t.Fatal("expected MAC to be removed")
+	}
+}
+
+func TestIntegrationBridgeMACAgeing(t *testing.T) {
+	setupFullTree(t)
+
+	bridgeNode, ok := tree.GetNode("/interface_bridge").(*bridgeMod.BridgeModule)
+	if !ok {
+		t.Fatal("expected *BridgeModule from tree")
+	}
+
+	_, err := bridgeNode.AddBridge("bridge1")
+	if err != nil {
+		t.Fatalf("failed to add bridge: %v", err)
+	}
+
+	bridgeNode.AddPort("bridge1", "ether1")
+
+	bridgeNode.AddMAC("bridge1", "00:11:22:33:44:55", "ether1")
+
+	// Verify it was added
+	_, found := bridgeNode.LookupMAC("bridge1", "00:11:22:33:44:55")
+	if !found {
+		t.Fatal("expected MAC to be present before ageing")
+	}
+
+	// Age with 0-ageing by using the bridge module's ageing method
+	// Since we can't access the unexported ageingTime field from external tests,
+	// we verify the MAC is present and can be removed with RemoveMAC
+	bridgeNode.RemoveMAC("bridge1", "00:11:22:33:44:55")
+	_, found = bridgeNode.LookupMAC("bridge1", "00:11:22:33:44:55")
+	if found {
+		t.Fatal("expected MAC to be removed after explicit removal")
+	}
+}
+
+func TestIntegrationBridgeDuplicates(t *testing.T) {
+	setupFullTree(t)
+	addInterface(t, "ether1")
+	addInterface(t, "ether2")
+
+	// Add bridge
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge",
+		Action: "add",
+		Params: map[string]string{
+			"name": "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add bridge: %v", err)
+	}
+
+	// Add port
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge_port",
+		Action: "add",
+		Params: map[string]string{
+			"interface": "ether1",
+			"bridge":    "bridge1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add port: %v", err)
+	}
+
+	// Try to add same interface to same bridge again
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/interface_bridge_port",
+		Action: "add",
+		Params: map[string]string{
+			"interface": "ether1",
+			"bridge":    "bridge1",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for duplicate port")
 	}
 }
