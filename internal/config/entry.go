@@ -55,7 +55,7 @@ func (e *Entry) GetProperty(name string) (interface{}, bool) {
 	return prop.Value, true
 }
 
-// SetProperty sets a property value.
+// SetProperty sets a property value with sanitization.
 func (e *Entry) SetProperty(name string, value interface{}) error {
 	prop, ok := e.Properties[name]
 	if !ok {
@@ -63,6 +63,13 @@ func (e *Entry) SetProperty(name string, value interface{}) error {
 	}
 	if prop.ReadOnly {
 		return fmt.Errorf("property %q is read-only", name)
+	}
+	// Sanitize string values
+	if strVal, ok := value.(string); ok && prop.Type == "string" {
+		value = SanitizeString(strVal, MaxPropertyStringLen)
+	}
+	if commentVal, ok := value.(string); ok && name == "comment" {
+		value = SanitizeComment(commentVal, MaxCommentLen)
 	}
 	prop.Value = value
 	return nil

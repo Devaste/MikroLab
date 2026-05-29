@@ -385,9 +385,9 @@ func TestIPAddressNoInterface(t *testing.T) {
 
 	op := config.NewOperation(config.OpAdd, "/ip/address")
 	op.Properties["address"] = "8.8.8.8/32"
-	// No interface property set
-	if err := mm.ExecuteOperation(op); err != nil {
-		t.Errorf("expected add without interface to use defaults: %v", err)
+	// No interface property set — interface is required and has no default
+	if err := mm.ExecuteOperation(op); err == nil {
+		t.Error("expected error for add without required interface property")
 	}
 }
 

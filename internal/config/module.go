@@ -35,6 +35,7 @@ func (mm *ModuleManager) LoadModule(filePath string) (*ModuleSchema, error) {
 		return nil, fmt.Errorf("failed to parse module schema %s: %w", filePath, err)
 	}
 
+	schema.SourceFile = filePath
 	return schema, mm.RegisterModule(schema)
 }
 
@@ -89,36 +90,42 @@ func (mm *ModuleManager) GetSchema(path string) (*ModuleSchema, bool) {
 
 // ExecuteOperation executes an operation with validation.
 func (mm *ModuleManager) ExecuteOperation(op *Operation) error {
-	schema, ok := mm.Modules[op.Path]
-	if !ok {
-		return fmt.Errorf("no module registered for path %s", op.Path)
+	// 1. Validate and sanitize the operation
+	validated, err := ValidateOperation(op, mm)
+	if err != nil {
+		return fmt.Errorf("operation validation failed: %w", err)
 	}
 
-	action, ok := schema.GetAction(string(op.Type))
+	schema, ok := mm.Modules[validated.Path]
 	if !ok {
-		return fmt.Errorf("action %q not supported by module %s", op.Type, op.Path)
+		return fmt.Errorf("no module registered for path %s", validated.Path)
 	}
 
-	// Validate
-	result := mm.ValidatorRegistry.Validate(action.Validators, op, mm.Tree)
+	action, ok := schema.GetAction(string(validated.Type))
+	if !ok {
+		return fmt.Errorf("action %q not supported by module %s", validated.Type, validated.Path)
+	}
+
+	// 2. Run business logic validators
+	result := mm.ValidatorRegistry.Validate(action.Validators, validated, mm.Tree)
 	if result.HasErrors() {
 		return fmt.Errorf("validation failed: %w", result)
 	}
 
-	// Execute based on operation type
-	switch op.Type {
+	// 3. Execute based on operation type with the validated operation
+	switch validated.Type {
 	case OpAdd:
-		return mm.executeAdd(schema, op)
+		return mm.executeAdd(schema, validated)
 	case OpSet:
-		return mm.executeSet(schema, op)
+		return mm.executeSet(schema, validated)
 	case OpRemove:
-		return mm.executeRemove(schema, op)
+		return mm.executeRemove(schema, validated)
 	case OpDisable:
-		return mm.executeToggleDisable(schema, op, true)
+		return mm.executeToggleDisable(schema, validated, true)
 	case OpEnable:
-		return mm.executeToggleDisable(schema, op, false)
+		return mm.executeToggleDisable(schema, validated, false)
 	default:
-		return fmt.Errorf("operation %q not yet implemented", op.Type)
+		return fmt.Errorf("operation %q not yet implemented", validated.Type)
 	}
 }
 

@@ -47,17 +47,28 @@ type SchemaAction struct {
 	Description string   `json:"description"`
 }
 
+// SchemaDependency describes a dependency on another module.
+type SchemaDependency struct {
+	Path    string `json:"path"`
+	Version string `json:"version,omitempty"`
+	Title   string `json:"title,omitempty"`
+}
+
 // ModuleSchema defines the schema for a module.
 type ModuleSchema struct {
-	Path        string                     `json:"path"`
-	Type        string                     `json:"type"`
-	Title       string                     `json:"title"`
-	Description string                     `json:"description"`
-	Flags       []SchemaFlag               `json:"flags"`
-	Schema      map[string]*SchemaProperty `json:"schema"`
-	Actions     map[string]*SchemaAction   `json:"actions"`
-	Defaults    map[string]interface{}     `json:"defaults"`
-	Constraints map[string]string          `json:"constraints"`
+	Path         string                     `json:"path"`
+	Type         string                     `json:"type"`
+	Title        string                     `json:"title"`
+	Description  string                     `json:"description"`
+	Version      string                     `json:"version,omitempty"`
+	Checksum     string                     `json:"checksum,omitempty"`
+	Dependencies []SchemaDependency         `json:"dependencies,omitempty"`
+	Flags        []SchemaFlag               `json:"flags"`
+	Schema       map[string]*SchemaProperty `json:"schema"`
+	Actions      map[string]*SchemaAction   `json:"actions"`
+	Defaults     map[string]interface{}     `json:"defaults"`
+	Constraints  map[string]string          `json:"constraints"`
+	SourceFile   string                     `json:"-"`
 }
 
 // GetAction returns an action definition by name.

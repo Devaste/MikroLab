@@ -305,6 +305,36 @@ func (vr *ValidatorRegistry) registerBuiltins() {
 		return result
 	})
 
+	// valid_entry_id: validates entry ID format
+	vr.Register("valid_entry_id", func(op *Operation, tree *ConfigTree) *ValidationResult {
+		result := &ValidationResult{}
+		if op.EntryID == "" {
+			return result // entry ID may be empty for add operations
+		}
+		if err := ValidateEntryID(op.EntryID); err != nil {
+			result.Errors = append(result.Errors, ValidationError{
+				Field:   ".id",
+				Message: err.Error(),
+			})
+		}
+		return result
+	})
+
+	// valid_numbers: validates that number references are well-formed
+	vr.Register("valid_numbers", func(op *Operation, tree *ConfigTree) *ValidationResult {
+		result := &ValidationResult{}
+		if len(op.Numbers) == 0 {
+			return result
+		}
+		if err := ValidateNumbers(op.Numbers); err != nil {
+			result.Errors = append(result.Errors, ValidationError{
+				Field:   "numbers",
+				Message: err.Error(),
+			})
+		}
+		return result
+	})
+
 	// valid_mac_address: validates MAC format
 	vr.Register("valid_mac_address", func(op *Operation, tree *ConfigTree) *ValidationResult {
 		result := &ValidationResult{}
