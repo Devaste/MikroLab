@@ -51,6 +51,26 @@ Think of it as **Cisco Packet Tracer, but for MikroTik** — design complex netw
 
 ## Architecture Overview
 
+### Module Directory Layout
+
+The backend module hierarchy mirrors the RouterOS path structure. Each configuration module lives under `internal/modules/` and is organized by its RouterOS path:
+
+```
+internal/modules/
+├── ip/
+│   ├── address/            # implements /ip address
+│   │   └── schema.json
+│   ├── arp/                # implements /ip arp
+│   │   └── schema.json
+│   └── (future: cloud/, route/, firewall/, ...)
+├── interfaces/             # implements /interface (top-level; will be moved under / later)
+└── system/                 # implements /system (planned)
+```
+
+> **Note:** The filesystem path is purely for code organization — the module's `Path()` method returns the runtime RouterOS path (e.g., `/ip/address`), which is used by `GetNode()` for tree traversal and is **independent** of where the `.go` files are stored.
+
+### System Architecture
+
 ```
 ┌─────────────────────────────────────────────┐
 │              Browser (React UI)             │

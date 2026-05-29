@@ -14,7 +14,8 @@ Create a spiritual successor to Cisco Packet Tracer for MikroTik devices — a s
 
 ### Backend (Go)
 - **Dependency management:** Go Modules (`go.mod` / `go.sum`) — standard `go get` / `go mod tidy` workflow.
-- **Configuration core:** in-memory tree reflecting RouterOS structure (directories, lists, properties).
+- **Configuration core:** in-memory tree built programmatically at startup — `main.go` creates directory nodes (e.g., `/`, `/ip`) and registers leaf modules via `AddChild()`.
+- **Tree traversal:** `GetNode(path)` resolves RouterOS paths by walking the in-memory tree; there is no static path-to-file mapping.
 - **CLI parser and interpreter:** full support of RouterOS syntax (including nested commands, variables, `where` clauses).
 - **Packet engine:** simulation of packet processing (ARP, IP, firewall, NAT, connection tracking, routing).
 - **Topology:** graph of devices and links, delivering packets between ports.
@@ -29,8 +30,12 @@ Create a spiritual successor to Cisco Packet Tracer for MikroTik devices — a s
 - **Debug tools:** sniffer, torch, ping (real-time via event stream).
 
 ### Modular System
-- Module schemas described in JSON: path, node type, fields, validators, actions (add, set, remove, print, …).
-- Modules loaded as plugins, enabling easy extension.
+- Each module is a **self-contained directory** under `internal/modules/` containing:
+  - `schema.json` — module definition (paths, properties, actions, validators)
+  - One or more `.go` files implementing the `core.SettingsDirectory` or `core.Command` interface
+  - Optional `validators.go` for custom validation logic
+- The filesystem hierarchy mirrors the RouterOS path tree (e.g., `/ip/address` → `internal/modules/ip/address/`), but this is purely for code organization. Each module's `Path()` method returns the runtime RouterOS path, which is independent of where the `.go` files are stored.
+- Modules are registered programmatically in `main.go`: directory nodes (e.g., `/`, `/ip`) are created first, then leaf modules are attached via `AddChild("address", addrModule)`. There is no static path-to-file mapping — the in-memory tree is built at startup.
 - Device profiles (JSON) define available ports, hardware capabilities, default behavior.
 
 ## Alpha Version (MVP)

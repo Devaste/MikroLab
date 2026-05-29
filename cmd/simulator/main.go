@@ -1,13 +1,15 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Devaste/MikroLab/internal/config"
 	"github.com/Devaste/MikroLab/internal/core"
 	"github.com/Devaste/MikroLab/internal/modules/interfaces"
-	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip_address"
+	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
 )
 
 // ---------------------------------------------------------------------------
@@ -120,89 +122,14 @@ func registerModules() (map[string]core.Node, error) {
 	// 3. Create a placeholder /interface checker with hardcoded interfaces.
 	ifaceModule := interfaces.NewDefault()
 
-	// 4. Build the IP address schema from the JSON definition embedded in code.
-	//    In production this would be loaded from the module registry, but here
-	//    we construct it manually for the simulator.
-	schema := &config.ModuleSchema{
-		Path:        "/ip/address",
-		Type:        "list",
-		Title:       "IP Addresses",
-		Description: "Manages IPv4 addresses assigned to router interfaces.",
-		Flags: []config.SchemaFlag{
-			{Letter: "X", Name: "disabled", Description: "Entry is disabled."},
-			{Letter: "I", Name: "invalid", Description: "Configuration is invalid."},
-			{Letter: "D", Name: "dynamic", Description: "Entry created by a DHCP client."},
-			{Letter: "S", Name: "slave", Description: "Address belongs to a slave interface."},
-		},
-		Schema: map[string]*config.SchemaProperty{
-			"address": {
-				Name: "address", Type: config.SchemaString, Required: true,
-				Description: "IPv4 address with prefix length.",
-			},
-			"network": {
-				Name: "network", Type: config.SchemaIPAddr,
-				Description: "Network address derived from address and netmask.",
-			},
-			"broadcast": {
-				Name: "broadcast", Type: config.SchemaIPAddr,
-				Description: "Broadcast address derived from address and netmask.",
-			},
-			"interface": {
-				Name: "interface", Type: config.SchemaInterface, Required: true,
-				Description: "Interface on which the IP address is configured.",
-			},
-			"actual-interface": {
-				Name: "actual-interface", Type: config.SchemaInterface, ReadOnly: true,
-				Description: "Actual interface where the address is set up.",
-			},
-			"vrf": {
-				Name: "vrf", Type: config.SchemaEnum, ReadOnly: true,
-				Default: "main", Description: "VRF this address is associated with.",
-			},
-			"comment": {
-				Name: "comment", Type: config.SchemaString, Default: "",
-				Description: "User comment.",
-			},
-		},
-		Actions: map[string]*config.SchemaAction{
-			"add": {
-				Name: "add", Parameters: []string{"address", "interface", "comment"},
-				Validators:  []string{"duplicate_ip_per_interface", "valid_netmask", "interface_exists", "ip_not_in_reserved_range"},
-				FlagsSet:    []string{"disabled"},
-				Description: "Add a new IP address.",
-			},
-			"set": {
-				Name: "set", Parameters: []string{"numbers", "address", "interface", "comment"},
-				Validators:  []string{"entry_exists", "duplicate_ip_per_interface", "interface_exists"},
-				Description: "Modify properties of existing IP address(es).",
-			},
-			"remove": {
-				Name: "remove", Parameters: []string{"numbers"},
-				Validators:  []string{"entry_exists", "not_dynamic"},
-				Description: "Delete IP address(es).",
-			},
-			"disable": {
-				Name: "disable", Parameters: []string{"numbers"},
-				Validators:  []string{"entry_exists"},
-				Description: "Disable IP address(es).",
-			},
-			"enable": {
-				Name: "enable", Parameters: []string{"numbers"},
-				Validators:  []string{"entry_exists"},
-				Description: "Enable disabled IP address(es).",
-			},
-		},
-		Defaults: map[string]interface{}{
-			"comment":  "",
-			"disabled": false,
-			"vrf":      "main",
-		},
-		Constraints: map[string]string{
-			"duplicate_ip_per_interface": "Cannot add the same IP address on the same interface.",
-			"valid_netmask":              "Netmask must be between /0 and /32.",
-			"interface_exists":           "Interface must exist in /interface.",
-			"ip_not_in_reserved_range":   "Reserved IP ranges cannot be assigned.",
-		},
+	// 4. Load the IP address schema from the JSON file.
+	schemaData, err := os.ReadFile("internal/modules/ip/address/schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read IP address schema: %w", err)
+	}
+	schema := &config.ModuleSchema{}
+	if err := json.Unmarshal(schemaData, schema); err != nil {
+		return nil, fmt.Errorf("failed to parse IP address schema: %w", err)
 	}
 
 	ipAddrModule, err := ipAddr.New(schema, ifaceModule)

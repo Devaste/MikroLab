@@ -1,10 +1,15 @@
 package ip_arp_test
 
 import (
+	_ "embed"
+	"encoding/json"
 	"testing"
 
 	"github.com/Devaste/MikroLab/internal/config"
 )
+
+//go:embed schema.json
+var arpSchemaJSON []byte
 
 func loadARPModule(t *testing.T) (*config.ModuleManager, *config.ConfigTree) {
 	t.Helper()
@@ -12,85 +17,9 @@ func loadARPModule(t *testing.T) (*config.ModuleManager, *config.ConfigTree) {
 	vr := config.NewValidatorRegistry()
 	mm := config.NewModuleManager(ct, vr)
 
-	schema := &config.ModuleSchema{
-		Path:        "/ip/arp",
-		Type:        "list",
-		Title:       "ARP Table",
-		Description: "Manages the ARP table entries.",
-		Flags: []config.SchemaFlag{
-			{Letter: "X", Name: "disabled", Description: "Entry is disabled."},
-			{Letter: "I", Name: "invalid", Description: "Configuration is invalid."},
-			{Letter: "H", Name: "dhcp", Description: "Entry created by DHCP snooping."},
-			{Letter: "D", Name: "dynamic", Description: "Entry dynamically learned via ARP."},
-			{Letter: "P", Name: "published", Description: "Entry is published."},
-			{Letter: "C", Name: "complete", Description: "Entry is complete and functional."},
-		},
-		Schema: map[string]*config.SchemaProperty{
-			"address": {
-				Name: "address", Type: config.SchemaIPAddr, Required: true,
-				Description: "IP address of the ARP entry.",
-			},
-			"mac-address": {
-				Name: "mac-address", Type: config.SchemaMACAddr, Required: true,
-				Description: "MAC address associated with the ARP entry.",
-			},
-			"interface": {
-				Name: "interface", Type: config.SchemaInterface, Required: true,
-				Description:   "Interface on which the ARP entry is learned.",
-				DynamicValues: true, Ref: "/interface",
-			},
-			"published": {
-				Name: "published", Type: config.SchemaBoolean, Default: false,
-				Description: "Whether the entry is published.",
-			},
-			"status": {
-				Name: "status", Type: config.SchemaString, ReadOnly: true,
-				Description: "Current ARP entry status.",
-			},
-			"vrf": {
-				Name: "vrf", Type: config.SchemaEnum, Default: "main", ReadOnly: true,
-				Description:   "VRF this ARP entry is associated with.",
-				DynamicValues: true,
-			},
-		},
-		Actions: map[string]*config.SchemaAction{
-			"add": {
-				Name: "add", Parameters: []string{"address", "mac-address", "interface", "published"},
-				Validators:  []string{"duplicate_arp_entry", "interface_exists", "valid_mac_address"},
-				FlagsSet:    []string{"disabled"},
-				Description: "Add a new static ARP entry.",
-			},
-			"set": {
-				Name: "set", Parameters: []string{"numbers", "address", "mac-address", "interface", "published"},
-				Validators:  []string{"entry_exists", "duplicate_arp_entry", "interface_exists"},
-				Description: "Modify properties of existing ARP entry(ies).",
-			},
-			"remove": {
-				Name: "remove", Parameters: []string{"numbers"},
-				Validators:  []string{"entry_exists", "not_dynamic"},
-				Description: "Delete ARP entry(ies).",
-			},
-			"disable": {
-				Name: "disable", Parameters: []string{"numbers"},
-				Validators:  []string{"entry_exists"},
-				Description: "Disable ARP entry(ies).",
-			},
-			"enable": {
-				Name: "enable", Parameters: []string{"numbers"},
-				Validators:  []string{"entry_exists"},
-				Description: "Enable disabled ARP entry(ies).",
-			},
-		},
-		Defaults: map[string]interface{}{
-			"published": false,
-			"disabled":  false,
-			"vrf":       "main",
-		},
-		Constraints: map[string]string{
-			"duplicate_arp_entry": "Cannot add the same IP-MAC pair on the same interface.",
-			"interface_exists":    "Interface must exist in /interface.",
-			"valid_mac_address":   "MAC address must be a valid Ethernet MAC.",
-		},
+	schema := &config.ModuleSchema{}
+	if err := json.Unmarshal(arpSchemaJSON, schema); err != nil {
+		t.Fatalf("failed to parse ARP schema: %v", err)
 	}
 
 	if err := mm.RegisterModule(schema); err != nil {
@@ -429,17 +358,9 @@ func TestARPEventEmitted(t *testing.T) {
 }
 
 func TestARPFlags(t *testing.T) {
-	schema := &config.ModuleSchema{
-		Path: "/ip/arp",
-		Type: "list",
-		Flags: []config.SchemaFlag{
-			{Letter: "X", Name: "disabled"},
-			{Letter: "I", Name: "invalid"},
-			{Letter: "H", Name: "dhcp"},
-			{Letter: "D", Name: "dynamic"},
-			{Letter: "P", Name: "published"},
-			{Letter: "C", Name: "complete"},
-		},
+	schema := &config.ModuleSchema{}
+	if err := json.Unmarshal(arpSchemaJSON, schema); err != nil {
+		t.Fatalf("failed to parse ARP schema: %v", err)
 	}
 
 	if len(schema.Flags) != 6 {
