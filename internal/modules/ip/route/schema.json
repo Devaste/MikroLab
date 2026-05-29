@@ -103,7 +103,7 @@
     },
     "set": {
       "parameters": ["numbers", "dst-address", "gateway", "distance", "pref-src", "disabled", "blackhole", "routing-table", "check-gateway"],
-      "validators": ["entry_exists", "valid_dst", "valid_gateway"],
+      "validators": ["entry_exists", "valid_dst", "valid_gateway", "not_dynamic"],
       "description": "Modify properties of existing route(s)."
     },
     "remove": {

@@ -214,6 +214,7 @@ type RouteModule struct {
 	entries      map[string]*routeEntry // id -> entry
 	index        int
 	ifaceChecker InterfaceChecker
+	validators   validatorRegistry
 }
 
 // New creates a new RouteModule with the given schema and interface checker.
@@ -228,6 +229,7 @@ func New(schema *config.ModuleSchema, ifaceChecker InterfaceChecker) (*RouteModu
 		schema:       schema,
 		entries:      make(map[string]*routeEntry),
 		ifaceChecker: ifaceChecker,
+		validators:   builtinValidators(),
 	}, nil
 }
 
@@ -282,12 +284,7 @@ func (m *RouteModule) Add(props map[string]interface{}) (core.Entry, error) {
 	}
 	gw = strings.TrimSpace(gw)
 
-	// 2. Validate dst-address is valid CIDR
-	if err := validateCIDR(dst); err != nil {
-		return nil, fmt.Errorf("route: %w", err)
-	}
-
-	// 3. Validate gateway (IP or existing interface)
+	// 2. Determine blackhole status early for gateway validation
 	blackhole := false
 	if bhRaw, hasBH := props["blackhole"]; hasBH {
 		bh, err := toBool(bhRaw)
@@ -296,13 +293,26 @@ func (m *RouteModule) Add(props map[string]interface{}) (core.Entry, error) {
 		}
 	}
 
-	if !blackhole {
-		if err := m.validateGateway(gw); err != nil {
+	// 3. Run business-rule validators from the "add" action
+	action, ok := m.schema.GetAction("add")
+	if ok && len(action.Validators) > 0 {
+		entries := m.entryList()
+		if err := runValidators(action.Validators, props, entries, m.ifaceChecker, m.validators); err != nil {
+			return nil, err
+		}
+	} else {
+		// Fallback: inline validation for backward compatibility
+		// when schema does not define validators.
+		if err := validateCIDR(dst); err != nil {
 			return nil, fmt.Errorf("route: %w", err)
+		}
+		if !blackhole {
+			if err := m.validateGateway(gw); err != nil {
+				return nil, fmt.Errorf("route: %w", err)
+			}
 		}
 	}
 
-	// 4. Build entry with defaults
 	entry := &routeEntry{
 		id:           strconv.Itoa(m.index),
 		index:        m.index,
@@ -320,7 +330,7 @@ func (m *RouteModule) Add(props map[string]interface{}) (core.Entry, error) {
 	}
 	m.index++
 
-	// 5. Apply overrides from props
+	// 4. Apply overrides from props
 	if err := applyRouteProps(entry, props); err != nil {
 		return nil, err
 	}
@@ -330,7 +340,7 @@ func (m *RouteModule) Add(props map[string]interface{}) (core.Entry, error) {
 		entry.active = true
 	}
 
-	// 6. Store
+	// 5. Store
 	m.entries[entry.id] = entry
 
 	return &entryAdapter{entry: entry}, nil
@@ -347,6 +357,25 @@ func (m *RouteModule) Set(id string, props map[string]interface{}) error {
 	}
 	if entry.dynamic {
 		return fmt.Errorf("route: cannot modify dynamic entry %q", id)
+	}
+
+	// Run business-rule validators from the "set" action
+	// Merge sanitized values with existing entry values so validators
+	// like valid_gateway can check the full picture.
+	merged := make(map[string]interface{})
+	merged["dst-address"] = entry.dstAddress
+	merged["gateway"] = entry.gateway
+	merged["blackhole"] = entry.blackhole
+	for k, v := range props {
+		merged[k] = v
+	}
+
+	action, ok := m.schema.GetAction("set")
+	if ok && len(action.Validators) > 0 {
+		entries := m.entryList()
+		if err := runValidators(action.Validators, merged, entries, m.ifaceChecker, m.validators); err != nil {
+			return err
+		}
 	}
 
 	// Apply props
@@ -451,11 +480,12 @@ func (m *RouteModule) RemoveConnectedRoute(network string) {
 // (longest prefix match among active routes)
 // ---------------------------------------------------------------------------
 
-// LookupResult contains the resolved gateway and outbound interface for a
-// destination IP lookup.
+// LookupResult contains the resolved gateway, outbound interface, and distance
+// for a destination IP lookup.
 type LookupResult struct {
 	Gateway      string
 	OutInterface string
+	Distance     int
 }
 
 // Lookup finds the best matching route for the given destination IP address
@@ -525,6 +555,7 @@ func (m *RouteModule) Lookup(dstIP string) *LookupResult {
 	return &LookupResult{
 		Gateway:      gw,
 		OutInterface: outIface,
+		Distance:     bestMatch.distance,
 	}
 }
 
@@ -631,6 +662,19 @@ func (m *RouteModule) validateGateway(gw string) error {
 	}
 
 	return fmt.Errorf("invalid gateway %q: must be a valid IP address or existing interface name", gw)
+}
+
+// entryList returns all entries as a sorted []core.Entry slice.
+// Caller must hold at least a read lock.
+func (m *RouteModule) entryList() []core.Entry {
+	result := make([]core.Entry, 0, len(m.entries))
+	for _, e := range m.entries {
+		result = append(result, &entryAdapter{entry: e})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Index() < result[j].Index()
+	})
+	return result
 }
 
 // toInt converts an interface{} to int.
