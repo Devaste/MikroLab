@@ -1,0 +1,134 @@
+{
+  "path": "/ip/address",
+  "type": "list",
+  "title": "IP Addresses",
+  "description": "Manages IPv4 addresses assigned to router interfaces.",
+  "flags": [
+    {
+      "letter": "X",
+      "name": "disabled",
+      "description": "Entry is disabled."
+    },
+    {
+      "letter": "I",
+      "name": "invalid",
+      "description": "Configuration is invalid (e.g., missing interface)."
+    },
+    {
+      "letter": "D",
+      "name": "dynamic",
+      "description": "Entry created by a DHCP client or other service."
+    },
+    {
+      "letter": "S",
+      "name": "slave",
+      "description": "Address belongs to an interface which is a slave port to a master interface."
+    }
+  ],
+  "schema": {
+    "address": {
+      "type": "composite_arg",
+      "separator": "/",
+      "required": true,
+      "description": "IPv4 address with prefix length (CIDR) or netmask.",
+      "components": {
+        "address": {
+          "type": "ipAddr",
+          "required": true
+        },
+        "netmask": {
+          "type": "ipAddr",
+          "derived": true,
+          "description": "Netmask calculated from prefix length."
+        }
+      }
+    },
+    "network": {
+      "type": "ipAddr",
+      "description": "Network address derived from address and netmask."
+    },
+    "broadcast": {
+      "type": "ipAddr",
+      "description": "Broadcast address derived from address and netmask."
+    },
+    "interface": {
+      "type": "interface_enum",
+      "required": true,
+      "description": "Interface on which the IP address is configured.",
+      "dynamicValues": true,
+      "ref": "/interface"
+    },
+    "actual-interface": {
+      "type": "interface_enum",
+      "readOnly": true,
+      "computedFrom": "interface",
+      "description": "Actual interface where the address is set up (e.g., if Ethernet added to bridge, shows bridge)."
+    },
+    "vrf": {
+      "type": "enum",
+      "dynamicValues": true,
+      "default": "main",
+      "readOnly": true,
+      "description": "VRF this address is associated with."
+    },
+    "comment": {
+      "type": "string",
+      "default": "",
+      "description": "User comment."
+    }
+  },
+  "actions": {
+    "add": {
+      "parameters": ["address", "interface", "comment"],
+      "validators": [
+        "duplicate_ip_per_interface",
+        "valid_netmask",
+        "interface_exists",
+        "ip_not_in_reserved_range"
+      ],
+      "flags_set": ["disabled"],
+      "description": "Add a new IP address."
+    },
+    "set": {
+      "parameters": ["numbers", "address", "interface", "comment"],
+      "validators": ["entry_exists", "duplicate_ip_per_interface", "interface_exists"],
+      "description": "Modify properties of existing IP address(es)."
+    },
+    "remove": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists", "not_dynamic"],
+      "description": "Delete IP address(es)."
+    },
+    "print": {
+      "parameters": ["where", "detail", "follow"],
+      "output_formatter": "table",
+      "description": "Print IP address list."
+    },
+    "export": {
+      "parameters": ["compact"],
+      "output_formatter": "commands",
+      "description": "Export as CLI commands."
+    },
+    "disable": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists"],
+      "description": "Disable IP address(es)."
+    },
+    "enable": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists"],
+      "description": "Enable disabled IP address(es)."
+    }
+  },
+  "defaults": {
+    "comment": "",
+    "disabled": false,
+    "vrf": "main"
+  },
+  "constraints": {
+    "duplicate_ip_per_interface": "Cannot add the same IP address on the same interface.",
+    "valid_netmask": "Netmask must be between /0 and /32.",
+    "interface_exists": "Interface must exist in /interface.",
+    "ip_not_in_reserved_range": "Reserved IP ranges (e.g., 127.0.0.0/8, 0.0.0.0/8) cannot be assigned."
+  }
+}
