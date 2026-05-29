@@ -8,6 +8,12 @@ import (
 	"github.com/Devaste/MikroLab/internal/tree"
 )
 
+// FirewallEvaluator defines the interface for firewall rule evaluation.
+// The filter module implements this to check packets against firewall rules.
+type FirewallEvaluator interface {
+	Evaluate(deviceID, chain string, packet Packet) (action string, logMsg string)
+}
+
 // BridgeHandler defines the interface for bridge packet processing.
 // The bridge module implements this to handle L2 forwarding.
 type BridgeHandler interface {
@@ -32,11 +38,12 @@ type ForwardAction struct {
 // Topology manages a collection of simulated RouterOS devices and their
 // virtual interconnections (links).
 type Topology struct {
-	devices       map[string]*Device
-	links         map[string]*Link // link ID -> Link
-	mu            sync.RWMutex
-	nextID        int
-	bridgeHandler BridgeHandler
+	devices           map[string]*Device
+	links             map[string]*Link // link ID -> Link
+	mu                sync.RWMutex
+	nextID            int
+	bridgeHandler     BridgeHandler
+	firewallEvaluator FirewallEvaluator
 }
 
 // Link represents a virtual cable connecting two interfaces on two devices.
@@ -62,6 +69,13 @@ func (t *Topology) SetBridgeHandler(h BridgeHandler) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.bridgeHandler = h
+}
+
+// SetFirewallEvaluator sets the firewall evaluator for packet filtering.
+func (t *Topology) SetFirewallEvaluator(f FirewallEvaluator) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.firewallEvaluator = f
 }
 
 // Device returns the device with the given ID, or nil if not found.
@@ -295,6 +309,13 @@ func (t *Topology) SendPacket(srcDeviceID, outIface string, packet Packet) error
 					continue
 				}
 
+				// Apply firewall on forward chain (traversing the bridge)
+				packet.OutIface = action.OutIface
+				packet.InIface = outIface
+				if !t.applyFirewall(srcDeviceID, ChainForward, &packet) {
+					continue
+				}
+
 				// Route the packet directly to the target device
 				log.Printf("[topology] Bridge forwarding packet to %s (%s) on interface %s: %s -> %s (proto=%d)",
 					targetDevice.Name, targetDevice.ID, recvIface, packet.SrcIP, packet.DstIP, packet.Protocol)
@@ -332,6 +353,12 @@ func (t *Topology) SendPacket(srcDeviceID, outIface string, packet Packet) error
 		return fmt.Errorf("target device %s not found", targetDeviceID)
 	}
 
+	// Apply firewall on output chain for packet leaving the device
+	packet.OutIface = outIface
+	if !t.applyFirewall(srcDeviceID, ChainOutput, &packet) {
+		return nil
+	}
+
 	// Apply routing logic (only process ICMP echo requests once)
 	t.handleICMPPacket(targetDevice, recvIface, packet)
 	return nil
@@ -355,6 +382,12 @@ func (t *Topology) handleICMPPacket(device *Device, recvIface string, packet Pac
 		}
 	}
 
+	// Apply firewall on input chain for packet arriving at the device
+	packet.InIface = recvIface
+	if !t.applyFirewall(device.ID, ChainInput, &packet) {
+		return
+	}
+
 	// Only generate a reply for ICMP Echo Requests (type 8), not replies (type 0)
 	if packet.Protocol == 1 && len(packet.Payload) > 0 && packet.Payload[0] == 8 {
 		reply := Packet{
@@ -371,6 +404,12 @@ func (t *Topology) handleICMPPacket(device *Device, recvIface string, packet Pac
 		}
 
 		log.Printf("[topology] Generated ICMP reply: %s -> %s", reply.SrcIP, reply.DstIP)
+
+		// Apply firewall on output chain for the reply
+		reply.OutIface = recvIface
+		if !t.applyFirewall(device.ID, ChainOutput, &reply) {
+			return
+		}
 
 		// Send reply back directly (no further ICMP processing)
 		err := t.routePacketBack(device.ID, recvIface, reply)
@@ -405,6 +444,40 @@ func createICMPReply(requestPayload []byte) []byte {
 		reply[0] = 0 // ICMP Echo Reply type
 	}
 	return reply
+}
+
+// Chain constants for firewall evaluation
+const (
+	ChainInput   = "input"
+	ChainForward = "forward"
+	ChainOutput  = "output"
+)
+
+// applyFirewall evaluates the packet against firewall rules for the given chain.
+// Returns true if the packet should be accepted, false if dropped.
+// If the action is "log", the log message is recorded.
+func (t *Topology) applyFirewall(deviceID, chain string, packet *Packet) bool {
+	t.mu.RLock()
+	fw := t.firewallEvaluator
+	t.mu.RUnlock()
+
+	if fw == nil {
+		return true // no firewall configured - accept
+	}
+
+	action, logMsg := fw.Evaluate(deviceID, chain, *packet)
+
+	switch action {
+	case "drop":
+		log.Printf("[firewall] DROP: device=%s chain=%s %s -> %s (proto=%d)",
+			deviceID, chain, packet.SrcIP, packet.DstIP, packet.Protocol)
+		return false
+	case "log":
+		log.Printf("[firewall] LOG: %s", logMsg)
+		return true // log and continue
+	default:
+		return true // accept
+	}
 }
 
 // NewTreeForDevice creates a new empty configuration tree suitable for a device.

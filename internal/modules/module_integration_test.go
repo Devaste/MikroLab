@@ -14,9 +14,11 @@ import (
 	"github.com/Devaste/MikroLab/internal/core"
 	interfacesMod "github.com/Devaste/MikroLab/internal/modules/interface"
 	bridgeMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge"
-	bridgePortMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge_port"
+	bridgePortMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge/port"
 	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
+	firewallFilter "github.com/Devaste/MikroLab/internal/modules/ip/firewall/filter"
 	"github.com/Devaste/MikroLab/internal/modules/ip/route"
+	logMod "github.com/Devaste/MikroLab/internal/modules/log"
 	"github.com/Devaste/MikroLab/internal/tree"
 )
 
@@ -123,8 +125,41 @@ func setupFullTree(t *testing.T) {
 		t.Fatalf("failed to register bridge module: %v", err)
 	}
 
-	// 7. Load bridge port schema and create the bridge port module.
-	bridgePortSchemaData, err := os.ReadFile(resolvePath("internal/modules/interface/bridge_port/schema.json"))
+	// 7. Load firewall filter schema and create the filter module.
+	filterSchemaData, err := os.ReadFile(resolvePath("internal/modules/ip/firewall/filter/schema.json"))
+	if err != nil {
+		t.Fatalf("failed to read filter schema: %v", err)
+	}
+	filterSchema := &config.ModuleSchema{}
+	if err := json.Unmarshal(filterSchemaData, filterSchema); err != nil {
+		t.Fatalf("failed to parse filter schema: %v", err)
+	}
+	filterModule, err := firewallFilter.New(filterSchema, ifaceModule, nil)
+	if err != nil {
+		t.Fatalf("failed to create FilterModule: %v", err)
+	}
+
+	// Create /ip/firewall directory
+	ipFirewallDir := tree.NewTreeNode("/ip/firewall", core.NodeTypeDirectory, "IP Firewall")
+	if err := ipDir.AddChild("firewall", ipFirewallDir); err != nil {
+		t.Fatalf("failed to add /ip/firewall: %v", err)
+	}
+	if err := ipFirewallDir.AddChild("filter", filterModule); err != nil {
+		t.Fatalf("failed to register /ip/firewall/filter: %v", err)
+	}
+
+	// Create and register log module
+	logModule, err := logMod.New("/log", "System Log")
+	if err != nil {
+		t.Fatalf("failed to create LogModule: %v", err)
+	}
+	if err := tree.Root.AddChild("log", logModule); err != nil {
+		t.Fatalf("failed to register /log: %v", err)
+	}
+	filterModule.SetLogAdder(logModule)
+
+	// 8. Load bridge port schema and create the bridge port module.
+	bridgePortSchemaData, err := os.ReadFile(resolvePath("internal/modules/interface/bridge/port/schema.json"))
 	if err != nil {
 		t.Fatalf("failed to read bridge port schema: %v", err)
 	}
@@ -133,14 +168,14 @@ func setupFullTree(t *testing.T) {
 		t.Fatalf("failed to parse bridge port schema: %v", err)
 	}
 	bridgePortModule, err := bridgePortMod.New(
-		bridgePortSchema.Path,
-		bridgePortSchema.Title,
+		bridgePortSchema,
 		ifaceModule,
 		bridgeModule,
 	)
 	if err != nil {
 		t.Fatalf("failed to create BridgePortModule: %v", err)
 	}
+	// Register bridge port as a sibling of bridge under root (bridge is a list node)
 	if err := tree.Root.AddChild("interface_bridge_port", bridgePortModule); err != nil {
 		t.Fatalf("failed to register bridge port module: %v", err)
 	}
@@ -1010,5 +1045,135 @@ func TestIntegrationBridgeDuplicates(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for duplicate port")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// /ip/firewall/filter integration tests
+// ---------------------------------------------------------------------------
+
+func TestIntegrationFirewallAddAndPrint(t *testing.T) {
+	setupFullTree(t)
+
+	output, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/ip/firewall/filter",
+		Action: "add",
+		Params: map[string]string{
+			"chain":       "input",
+			"src-address": "192.168.1.0/24",
+			"action":      "drop",
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error adding firewall rule: %v", err)
+	}
+	if output == "" {
+		t.Fatal("expected non-empty output")
+	}
+
+	// Print rules
+	output, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/ip/firewall/filter",
+		Action: "print",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error on print: %v", err)
+	}
+	if len(output) == 0 {
+		t.Fatal("expected print output, got empty")
+	}
+}
+
+func TestIntegrationFirewallAddMissingChain(t *testing.T) {
+	setupFullTree(t)
+
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/ip/firewall/filter",
+		Action: "add",
+		Params: map[string]string{
+			"action": "drop",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for missing chain, got nil")
+	}
+}
+
+func TestIntegrationFirewallAddInvalidChain(t *testing.T) {
+	setupFullTree(t)
+
+	_, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/ip/firewall/filter",
+		Action: "add",
+		Params: map[string]string{
+			"chain":  "invalid",
+			"action": "drop",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid chain, got nil")
+	}
+}
+
+func TestIntegrationFirewallRemoveRule(t *testing.T) {
+	setupFullTree(t)
+
+	output, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/ip/firewall/filter",
+		Action: "add",
+		Params: map[string]string{
+			"chain":  "input",
+			"action": "drop",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add rule: %v", err)
+	}
+	if output == "" {
+		t.Fatal("expected non-empty output")
+	}
+
+	// Remove the rule
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/ip/firewall/filter",
+		Action: "remove",
+		Params: map[string]string{
+			"numbers": "0",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to remove rule: %v", err)
+	}
+}
+
+func TestIntegrationFirewallSetRule(t *testing.T) {
+	setupFullTree(t)
+
+	output, err := cli.Execute(cli.ParsedCommand{
+		Path:   "/ip/firewall/filter",
+		Action: "add",
+		Params: map[string]string{
+			"chain":  "input",
+			"action": "accept",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add rule: %v", err)
+	}
+	if output == "" {
+		t.Fatal("expected non-empty output")
+	}
+
+	// Set the action to drop
+	_, err = cli.Execute(cli.ParsedCommand{
+		Path:   "/ip/firewall/filter",
+		Action: "set",
+		Params: map[string]string{
+			"numbers": "0",
+			"action":  "drop",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to set rule: %v", err)
 	}
 }

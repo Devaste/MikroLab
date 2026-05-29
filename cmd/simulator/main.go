@@ -15,10 +15,12 @@ import (
 	"github.com/Devaste/MikroLab/internal/core"
 	interfaceMod "github.com/Devaste/MikroLab/internal/modules/interface"
 	bridgeMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge"
-	bridgePortMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge_port"
+	bridgePortMod "github.com/Devaste/MikroLab/internal/modules/interface/bridge/port"
 	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
 	arpMod "github.com/Devaste/MikroLab/internal/modules/ip/arp"
+	firewallFilter "github.com/Devaste/MikroLab/internal/modules/ip/firewall/filter"
 	routeMod "github.com/Devaste/MikroLab/internal/modules/ip/route"
+	logMod "github.com/Devaste/MikroLab/internal/modules/log"
 	pingMod "github.com/Devaste/MikroLab/internal/modules/ping"
 	"github.com/Devaste/MikroLab/internal/topology"
 	"github.com/Devaste/MikroLab/internal/tree"
@@ -133,7 +135,7 @@ func registerModulesOnTree(root *tree.TreeNode) (map[string]core.Node, error) {
 	}
 
 	// 7. Load bridge port schema and create the bridge port module.
-	bridgePortSchemaData, err := os.ReadFile("internal/modules/interface/bridge_port/schema.json")
+	bridgePortSchemaData, err := os.ReadFile("internal/modules/interface/bridge/port/schema.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read bridge port schema: %w", err)
 	}
@@ -143,8 +145,7 @@ func registerModulesOnTree(root *tree.TreeNode) (map[string]core.Node, error) {
 	}
 
 	bridgePortModule, err := bridgePortMod.New(
-		bridgePortSchema.Path,
-		bridgePortSchema.Title,
+		bridgePortSchema,
 		ifaceModule,
 		bridgeModule,
 	)
@@ -152,7 +153,7 @@ func registerModulesOnTree(root *tree.TreeNode) (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to create BridgePortModule: %w", err)
 	}
 
-	// Register as a child of /interface
+	// Register as a child of /interface (sibling of bridge, since bridge is a list node)
 	if err := ifaceNode.AddChild("bridge_port", bridgePortModule); err != nil {
 		return nil, fmt.Errorf("failed to register /interface/bridge_port: %w", err)
 	}
@@ -167,7 +168,48 @@ func registerModulesOnTree(root *tree.TreeNode) (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ping: %w", err)
 	}
 
-	// 9. Register modules in the lookup map
+	// 9. Create /ip/firewall directory
+	ipFirewallDir := tree.NewTreeNode("/ip/firewall", core.NodeTypeDirectory, "IP Firewall")
+	if err := ipDir.AddChild("firewall", ipFirewallDir); err != nil {
+		return nil, fmt.Errorf("failed to add /ip/firewall: %w", err)
+	}
+
+	// 10. Load firewall filter schema and create the filter module.
+	filterSchemaData, err := os.ReadFile("internal/modules/ip/firewall/filter/schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read filter schema: %w", err)
+	}
+	filterSchema := &config.ModuleSchema{}
+	if err := json.Unmarshal(filterSchemaData, filterSchema); err != nil {
+		return nil, fmt.Errorf("failed to parse filter schema: %w", err)
+	}
+
+	// The log module is created later and set on the filter module
+	filterModule, err := firewallFilter.New(filterSchema, ifaceModule, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create FilterModule: %w", err)
+	}
+
+	if err := ipFirewallDir.AddChild("filter", filterModule); err != nil {
+		return nil, fmt.Errorf("failed to register /ip/firewall/filter: %w", err)
+	}
+
+	// 11. Create the log module
+	logModule, err := logMod.New("/log", "System Log")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create LogModule: %w", err)
+	}
+
+	if err := root.AddChild("log", logModule); err != nil {
+		return nil, fmt.Errorf("failed to register /log: %w", err)
+	}
+
+	// 12. Wire up log module to filter module for log action support
+	if err := filterModule.SetLogAdder(logModule); err != nil {
+		return nil, fmt.Errorf("failed to set log adder on filter module: %w", err)
+	}
+
+	// 13. Register modules in the lookup map
 	modules["/interface"] = ifaceModule
 	modules["/interface/bridge"] = bridgeModule
 	modules["/interface/bridge/port"] = bridgePortModule
@@ -175,6 +217,8 @@ func registerModulesOnTree(root *tree.TreeNode) (map[string]core.Node, error) {
 	modules["/ip/route"] = routeModule
 	modules["/ip/address"] = ipAddrModule
 	modules["/ip/arp"] = arpModInstance
+	modules["/ip/firewall/filter"] = filterModule
+	modules["/log"] = logModule
 	modules["/ping"] = pingCmd
 	return modules, nil
 }
@@ -291,6 +335,14 @@ func main() {
 		if bridgeHandler, ok := bridgeNode.(topology.BridgeHandler); ok {
 			topo.SetBridgeHandler(bridgeHandler)
 			fmt.Println("Bridge handler registered on topology manager")
+		}
+	}
+
+	// Set up firewall evaluator on topology
+	if filterNode, ok := modules["/ip/firewall/filter"]; ok {
+		if fwEvaluator, ok := filterNode.(topology.FirewallEvaluator); ok {
+			topo.SetFirewallEvaluator(fwEvaluator)
+			fmt.Println("Firewall evaluator registered on topology manager")
 		}
 	}
 

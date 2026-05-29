@@ -1,6 +1,6 @@
-// Package bridge_port implements the /interface bridge port settings directory for RouterOS v7.
+// Package port implements the /interface bridge port settings directory for RouterOS v7.
 // It provides adding and removing physical interfaces to/from a bridge.
-package bridge_port
+package port
 
 import (
 	"fmt"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Devaste/MikroLab/internal/config"
 	"github.com/Devaste/MikroLab/internal/core"
 )
 
@@ -188,20 +189,20 @@ type BridgePortModule struct {
 	bridgeMgr    BridgeManager
 }
 
-// New creates a new BridgePortModule.
-func New(path string, title string, ifaceChecker InterfaceChecker, bridgeMgr BridgeManager) (*BridgePortModule, error) {
-	if path == "" {
-		return nil, fmt.Errorf("bridge_port: path is required")
+// New creates a new BridgePortModule from the given schema.
+func New(schema *config.ModuleSchema, ifaceChecker InterfaceChecker, bridgeMgr BridgeManager) (*BridgePortModule, error) {
+	if schema == nil {
+		return nil, fmt.Errorf("bridge/port: schema is required")
 	}
 	if ifaceChecker == nil {
-		return nil, fmt.Errorf("bridge_port: interface checker is required")
+		return nil, fmt.Errorf("bridge/port: interface checker is required")
 	}
 	if bridgeMgr == nil {
-		return nil, fmt.Errorf("bridge_port: bridge manager is required")
+		return nil, fmt.Errorf("bridge/port: bridge manager is required")
 	}
 	return &BridgePortModule{
-		path:         path,
-		title:        title,
+		path:         schema.Path,
+		title:        schema.Title,
 		entries:      make(map[string]*bridgePortEntry),
 		byIface:      make(map[string]string),
 		ifaceChecker: ifaceChecker,
@@ -223,10 +224,10 @@ func (m *BridgePortModule) Title() string       { return m.title }
 
 func (m *BridgePortModule) Children() map[string]core.Node { return nil }
 func (m *BridgePortModule) AddChild(name string, child core.Node) error {
-	return fmt.Errorf("bridge_port: list node %q cannot accept child %q", m.path, name)
+	return fmt.Errorf("bridge/port: list node %q cannot accept child %q", m.path, name)
 }
 func (m *BridgePortModule) RemoveChild(name string) error {
-	return fmt.Errorf("bridge_port: list node %q has no child %q", m.path, name)
+	return fmt.Errorf("bridge/port: list node %q has no child %q", m.path, name)
 }
 func (m *BridgePortModule) Child(name string) (core.Node, bool) { return nil, false }
 
@@ -242,47 +243,47 @@ func (m *BridgePortModule) Add(props map[string]interface{}) (core.Entry, error)
 	// 1. Extract and validate interface name
 	ifaceRaw, hasIface := props["interface"]
 	if !hasIface {
-		return nil, fmt.Errorf("bridge_port: required property %q is missing", "interface")
+		return nil, fmt.Errorf("bridge/port: required property %q is missing", "interface")
 	}
 	ifaceName, ok := ifaceRaw.(string)
 	if !ok || strings.TrimSpace(ifaceName) == "" {
-		return nil, fmt.Errorf("bridge_port: property %q must be a non-empty string", "interface")
+		return nil, fmt.Errorf("bridge/port: property %q must be a non-empty string", "interface")
 	}
 	ifaceName = strings.TrimSpace(ifaceName)
 
 	// 2. Validate interface exists
 	if !m.ifaceChecker.InterfaceExists(ifaceName) {
-		return nil, fmt.Errorf("bridge_port: interface %q does not exist", ifaceName)
+		return nil, fmt.Errorf("bridge/port: interface %q does not exist", ifaceName)
 	}
 
 	// 3. Check interface not already in a bridge
 	if existingID, found := m.byIface[ifaceName]; found {
 		if existing, exists := m.entries[existingID]; exists {
-			return nil, fmt.Errorf("bridge_port: interface %q is already a port of bridge %q",
+			return nil, fmt.Errorf("bridge/port: interface %q is already a port of bridge %q",
 				ifaceName, existing.bridgeName)
 		}
 	}
 
 	// Also check via bridge manager if already registered elsewhere
 	if bridgeName, found := m.bridgeMgr.HasPort(ifaceName); found {
-		return nil, fmt.Errorf("bridge_port: interface %q is already a port of bridge %q",
+		return nil, fmt.Errorf("bridge/port: interface %q is already a port of bridge %q",
 			ifaceName, bridgeName)
 	}
 
 	// 4. Extract and validate bridge name
 	bridgeRaw, hasBridge := props["bridge"]
 	if !hasBridge {
-		return nil, fmt.Errorf("bridge_port: required property %q is missing", "bridge")
+		return nil, fmt.Errorf("bridge/port: required property %q is missing", "bridge")
 	}
 	bridgeName, ok := bridgeRaw.(string)
 	if !ok || strings.TrimSpace(bridgeName) == "" {
-		return nil, fmt.Errorf("bridge_port: property %q must be a non-empty string", "bridge")
+		return nil, fmt.Errorf("bridge/port: property %q must be a non-empty string", "bridge")
 	}
 	bridgeName = strings.TrimSpace(bridgeName)
 
 	// 5. Validate bridge exists
 	if !m.bridgeMgr.BridgeExists(bridgeName) {
-		return nil, fmt.Errorf("bridge_port: bridge %q does not exist", bridgeName)
+		return nil, fmt.Errorf("bridge/port: bridge %q does not exist", bridgeName)
 	}
 
 	// 6. Build entry with defaults
@@ -307,7 +308,7 @@ func (m *BridgePortModule) Add(props map[string]interface{}) (core.Entry, error)
 
 	// 8. Register port with bridge
 	if err := m.bridgeMgr.AddPort(bridgeName, ifaceName); err != nil {
-		return nil, fmt.Errorf("bridge_port: failed to register port with bridge: %w", err)
+		return nil, fmt.Errorf("bridge/port: failed to register port with bridge: %w", err)
 	}
 
 	// 9. Store
@@ -324,31 +325,31 @@ func (m *BridgePortModule) Set(id string, props map[string]interface{}) error {
 
 	entry, exists := m.entries[id]
 	if !exists {
-		return fmt.Errorf("bridge_port: entry %q not found", id)
+		return fmt.Errorf("bridge/port: entry %q not found", id)
 	}
 
 	// If interface is being changed, validate uniqueness
 	if ifaceRaw, hasIface := props["interface"]; hasIface {
 		newIface, ok := ifaceRaw.(string)
 		if !ok || strings.TrimSpace(newIface) == "" {
-			return fmt.Errorf("bridge_port: property %q must be a non-empty string", "interface")
+			return fmt.Errorf("bridge/port: property %q must be a non-empty string", "interface")
 		}
 		newIface = strings.TrimSpace(newIface)
 		if newIface != entry.ifaceName {
 			// Validate interface exists
 			if !m.ifaceChecker.InterfaceExists(newIface) {
-				return fmt.Errorf("bridge_port: interface %q does not exist", newIface)
+				return fmt.Errorf("bridge/port: interface %q does not exist", newIface)
 			}
 			// Check not already in a bridge
 			if existingID, found := m.byIface[newIface]; found && existingID != id {
 				if existing, exists := m.entries[existingID]; exists {
-					return fmt.Errorf("bridge_port: interface %q is already a port of bridge %q",
+					return fmt.Errorf("bridge/port: interface %q is already a port of bridge %q",
 						newIface, existing.bridgeName)
 				}
 			}
 			if bridgeName, found := m.bridgeMgr.HasPort(newIface); found {
 				if existing, ok := m.byIface[newIface]; !ok || existing != id {
-					return fmt.Errorf("bridge_port: interface %q is already a port of bridge %q",
+					return fmt.Errorf("bridge/port: interface %q is already a port of bridge %q",
 						newIface, bridgeName)
 				}
 			}
@@ -372,12 +373,12 @@ func (m *BridgePortModule) Set(id string, props map[string]interface{}) error {
 	if bridgeRaw, hasBridge := props["bridge"]; hasBridge {
 		newBridge, ok := bridgeRaw.(string)
 		if !ok || strings.TrimSpace(newBridge) == "" {
-			return fmt.Errorf("bridge_port: property %q must be a non-empty string", "bridge")
+			return fmt.Errorf("bridge/port: property %q must be a non-empty string", "bridge")
 		}
 		newBridge = strings.TrimSpace(newBridge)
 		if newBridge != entry.bridgeName {
 			if !m.bridgeMgr.BridgeExists(newBridge) {
-				return fmt.Errorf("bridge_port: bridge %q does not exist", newBridge)
+				return fmt.Errorf("bridge/port: bridge %q does not exist", newBridge)
 			}
 			// Remove from old bridge, add to new
 			if err := m.bridgeMgr.RemovePort(entry.bridgeName, entry.ifaceName); err != nil {
@@ -405,7 +406,7 @@ func (m *BridgePortModule) Remove(id string) error {
 
 	entry, exists := m.entries[id]
 	if !exists {
-		return fmt.Errorf("bridge_port: entry %q not found", id)
+		return fmt.Errorf("bridge/port: entry %q not found", id)
 	}
 
 	// Unregister from bridge
@@ -455,49 +456,49 @@ func applyPortProps(entry *bridgePortEntry, props map[string]interface{}) error 
 		case "path-cost":
 			i, err := toInt(rawVal)
 			if err != nil {
-				return fmt.Errorf("bridge_port: path-cost: %w", err)
+				return fmt.Errorf("bridge/port: path-cost: %w", err)
 			}
 			if i < 0 {
-				return fmt.Errorf("bridge_port: path-cost must be non-negative")
+				return fmt.Errorf("bridge/port: path-cost must be non-negative")
 			}
 			entry.pathCost = i
 		case "priority":
 			i, err := toInt(rawVal)
 			if err != nil {
-				return fmt.Errorf("bridge_port: priority: %w", err)
+				return fmt.Errorf("bridge/port: priority: %w", err)
 			}
 			if i < 0 || i > 255 {
-				return fmt.Errorf("bridge_port: priority must be between 0 and 255")
+				return fmt.Errorf("bridge/port: priority must be between 0 and 255")
 			}
 			entry.priority = i
 		case "edge":
 			s, ok := rawVal.(string)
 			if !ok {
-				return fmt.Errorf("bridge_port: edge must be a string")
+				return fmt.Errorf("bridge/port: edge must be a string")
 			}
 			s = strings.ToLower(strings.TrimSpace(s))
 			switch s {
 			case "auto", "yes", "no":
 				entry.edge = s
 			default:
-				return fmt.Errorf("bridge_port: edge must be one of: auto, yes, no")
+				return fmt.Errorf("bridge/port: edge must be one of: auto, yes, no")
 			}
 		case "point-to-point":
 			s, ok := rawVal.(string)
 			if !ok {
-				return fmt.Errorf("bridge_port: point-to-point must be a string")
+				return fmt.Errorf("bridge/port: point-to-point must be a string")
 			}
 			s = strings.ToLower(strings.TrimSpace(s))
 			switch s {
 			case "auto", "yes", "no":
 				entry.pointToPoint = s
 			default:
-				return fmt.Errorf("bridge_port: point-to-point must be one of: auto, yes, no")
+				return fmt.Errorf("bridge/port: point-to-point must be one of: auto, yes, no")
 			}
 		case "disabled":
 			b, err := toBool(rawVal)
 			if err != nil {
-				return fmt.Errorf("bridge_port: disabled: %w", err)
+				return fmt.Errorf("bridge/port: disabled: %w", err)
 			}
 			entry.disabled = b
 		case "interface", "bridge":

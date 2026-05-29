@@ -24,6 +24,14 @@ type Packet struct {
 	DstIP string
 	// Protocol is the IP protocol number (1 = ICMP, 6 = TCP, 17 = UDP)
 	Protocol int
+	// SrcPort is the source port (for TCP/UDP packets)
+	SrcPort int
+	// DstPort is the destination port (for TCP/UDP packets)
+	DstPort int
+	// InIface is the incoming interface name (set during packet processing)
+	InIface string
+	// OutIface is the outgoing interface name (set during packet processing)
+	OutIface string
 	// Payload contains the packet payload (e.g., ICMP echo data)
 	Payload []byte
 }

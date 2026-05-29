@@ -1,0 +1,119 @@
+{
+  "path": "/ip/firewall/filter",
+  "type": "list",
+  "title": "Firewall Filter Rules",
+  "description": "Packet filtering rules (input, forward, output).",
+  "flags": [
+    {"letter": "X", "name": "disabled", "description": "Rule is disabled."},
+    {"letter": "I", "name": "invalid", "description": "Rule is invalid."}
+  ],
+  "schema": {
+    "chain": {
+      "name": "chain",
+      "type": "enum",
+      "required": true,
+      "enumValues": ["input", "forward", "output"],
+      "description": "Which chain this rule belongs to."
+    },
+    "src-address": {
+      "name": "src-address",
+      "type": "string",
+      "description": "Source IP address (e.g., 192.168.1.0/24 or 0.0.0.0/0)."
+    },
+    "dst-address": {
+      "name": "dst-address",
+      "type": "string",
+      "description": "Destination IP address."
+    },
+    "protocol": {
+      "name": "protocol",
+      "type": "enum",
+      "enumValues": ["tcp", "udp", "icmp", "all"],
+      "description": "IP protocol to match."
+    },
+    "src-port": {
+      "name": "src-port",
+      "type": "int",
+      "min": 1,
+      "max": 65535,
+      "description": "Source port (TCP/UDP only)."
+    },
+    "dst-port": {
+      "name": "dst-port",
+      "type": "int",
+      "min": 1,
+      "max": 65535,
+      "description": "Destination port (TCP/UDP only)."
+    },
+    "in-interface": {
+      "name": "in-interface",
+      "type": "string",
+      "description": "Incoming interface name."
+    },
+    "out-interface": {
+      "name": "out-interface",
+      "type": "string",
+      "description": "Outgoing interface name."
+    },
+    "action": {
+      "name": "action",
+      "type": "enum",
+      "required": true,
+      "enumValues": ["accept", "drop", "log"],
+      "description": "What to do with matching packets."
+    },
+    "disabled": {
+      "name": "disabled",
+      "type": "bool",
+      "default": false,
+      "description": "Whether the rule is disabled."
+    },
+    "comment": {
+      "name": "comment",
+      "type": "string",
+      "default": "",
+      "description": "User comment."
+    },
+    "log-prefix": {
+      "name": "log-prefix",
+      "type": "string",
+      "default": "",
+      "description": "String prefixed to log messages."
+    }
+  },
+  "actions": {
+    "add": {
+      "name": "add",
+      "parameters": ["chain", "src-address", "dst-address", "protocol", "src-port", "dst-port", "in-interface", "out-interface", "action", "disabled", "comment", "log-prefix"],
+      "validators": ["valid_chain", "valid_address", "valid_protocol_port", "valid_interface"],
+      "description": "Add a new filter rule."
+    },
+    "set": {
+      "name": "set",
+      "parameters": ["numbers", "chain", "src-address", "dst-address", "protocol", "src-port", "dst-port", "in-interface", "out-interface", "action", "disabled", "comment", "log-prefix"],
+      "validators": ["entry_exists"],
+      "description": "Modify an existing rule."
+    },
+    "remove": {
+      "name": "remove",
+      "parameters": ["numbers"],
+      "validators": ["entry_exists"],
+      "description": "Remove rules."
+    },
+    "print": {
+      "name": "print",
+      "parameters": [],
+      "description": "Show firewall rules."
+    }
+  },
+  "defaults": {
+    "action": "accept",
+    "disabled": false
+  },
+  "constraints": {
+    "valid_chain": "Chain must be input, forward, or output.",
+    "valid_address": "Invalid IP address or CIDR.",
+    "valid_protocol_port": "Ports only allowed for TCP/UDP.",
+    "valid_interface": "Interface does not exist."
+  }
+}
