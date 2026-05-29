@@ -40,4 +40,3 @@ Thumbs.db
 # --- Project specific ---
 *.mktp.bak
 simulator.log
-ROS/*

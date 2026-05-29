@@ -1,0 +1,113 @@
+{
+  "path": "/interface",
+  "type": "list",
+  "title": "Interfaces",
+  "description": "Manages network interfaces.",
+  "flags": [
+    {
+      "letter": "X",
+      "name": "disabled",
+      "description": "Interface is disabled."
+    },
+    {
+      "letter": "R",
+      "name": "running",
+      "description": "Interface is running (cable plugged in, link detected)."
+    },
+    {
+      "letter": "D",
+      "name": "dynamic",
+      "description": "Interface is created dynamically."
+    },
+    {
+      "letter": "I",
+      "name": "inactive",
+      "description": "Interface is inactive (e.g., no cable)."
+    }
+  ],
+  "schema": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "description": "Unique interface name."
+    },
+    "default-name": {
+      "type": "string",
+      "readOnly": true,
+      "description": "Auto-generated hardware name (e.g., ether1)."
+    },
+    "type": {
+      "type": "string",
+      "readOnly": true,
+      "description": "Interface type (always 'ether' for MVP)."
+    },
+    "mtu": {
+      "type": "integer",
+      "default": 1500,
+      "description": "Maximum Transmission Unit."
+    },
+    "actual-mtu": {
+      "type": "integer",
+      "readOnly": true,
+      "computedFrom": "mtu",
+      "description": "Current actual MTU (same as mtu)."
+    },
+    "l2mtu": {
+      "type": "integer",
+      "default": 1500,
+      "description": "Layer 2 Maximum Transmission Unit."
+    },
+    "mac-address": {
+      "type": "macAddr",
+      "readOnly": true,
+      "description": "MAC address of the interface."
+    },
+    "running": {
+      "type": "bool",
+      "readOnly": true,
+      "computedFrom": "disabled",
+      "description": "Whether the interface is running (link detected)."
+    },
+    "comment": {
+      "type": "string",
+      "default": "",
+      "description": "User comment."
+    },
+    "disabled": {
+      "type": "bool",
+      "default": false,
+      "description": "Whether the interface is disabled."
+    }
+  },
+  "actions": {
+    "add": {
+      "parameters": ["name", "mtu", "l2mtu", "comment", "disabled"],
+      "validators": ["unique_name"],
+      "description": "Add a new interface."
+    },
+    "set": {
+      "parameters": ["numbers", "name", "mtu", "l2mtu", "comment", "disabled"],
+      "validators": ["entry_exists", "unique_name"],
+      "description": "Modify properties of existing interface(s)."
+    },
+    "remove": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists", "not_dynamic"],
+      "description": "Delete interface(s)."
+    },
+    "print": {
+      "parameters": ["where", "detail", "follow"],
+      "output_formatter": "table",
+      "description": "Print interface list."
+    }
+  },
+  "defaults": {
+    "mtu": 1500,
+    "l2mtu": 1500,
+    "comment": "",
+    "disabled": false
+  },
+  "constraints": {
+    "unique_name": "Interface name must be unique."
+  }
+}

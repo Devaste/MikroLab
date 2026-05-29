@@ -3,7 +3,9 @@ package ip_address
 
 import (
 	"fmt"
+	"net"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Devaste/MikroLab/internal/config"
@@ -47,6 +49,14 @@ func (a *entryAdapter) Flags() map[string]bool {
 // Compile-time check that config.Entry satisfies core.Entry through the adapter.
 var _ core.Entry = (*entryAdapter)(nil)
 
+// RouteManager defines the interface for managing connected routes.
+// This is implemented by the route module and used by IP address to
+// automatically create/remove connected routes when IPs are added/removed.
+type RouteManager interface {
+	AddConnectedRoute(network string, ifaceName string)
+	RemoveConnectedRoute(network string)
+}
+
 // IPAddressModule implements the /ip/address settings directory.
 // It maintains an in-memory map of entries and delegates schema validation
 // and sanitization to the internal/config package.
@@ -63,13 +73,16 @@ type IPAddressModule struct {
 	entries      map[string]*config.Entry // entry ID -> entry
 	index        int
 	ifaceChecker core.InterfaceChecker
+	routeManager RouteManager
 	validators   validatorRegistry
 }
 
 // New creates a new IPAddressModule with the given schema.
 // The ifaceChecker parameter provides interface name validation; pass nil
 // to skip interface-exists checks (not recommended for production).
-func New(schema *config.ModuleSchema, ifaceChecker core.InterfaceChecker) (*IPAddressModule, error) {
+// The routeManager parameter is optional; if non-nil, connected routes will
+// be automatically created/removed when IP addresses are added/removed.
+func New(schema *config.ModuleSchema, ifaceChecker core.InterfaceChecker, routeManager RouteManager) (*IPAddressModule, error) {
 	if schema == nil {
 		return nil, fmt.Errorf("ip_address: schema is required")
 	}
@@ -79,6 +92,7 @@ func New(schema *config.ModuleSchema, ifaceChecker core.InterfaceChecker) (*IPAd
 		schema:       schema,
 		entries:      make(map[string]*config.Entry),
 		ifaceChecker: ifaceChecker,
+		routeManager: routeManager,
 		validators:   builtinValidators(),
 	}, nil
 }
@@ -204,6 +218,18 @@ func (m *IPAddressModule) Add(props map[string]interface{}) (core.Entry, error) 
 	// 5. Store the entry
 	m.entries[entry.ID] = entry
 
+	// 6. Automatically create a connected route if routeManager is available
+	if m.routeManager != nil {
+		if ifaceStr, ok := iface.(string); ok && ifaceStr != "" {
+			if addrStr, ok := address.(string); ok && addrStr != "" {
+				network := computeNetwork(addrStr)
+				if network != "" {
+					m.routeManager.AddConnectedRoute(network, ifaceStr)
+				}
+			}
+		}
+	}
+
 	return &entryAdapter{entry: entry.Clone()}, nil
 }
 
@@ -289,6 +315,20 @@ func (m *IPAddressModule) Remove(id string) error {
 		return fmt.Errorf("ip_address: cannot remove dynamic entry %q", id)
 	}
 
+	// Before deleting, remove the connected route if routeManager is available
+	if m.routeManager != nil {
+		if ifaceRaw, ok := entry.Properties["interface"]; ok && ifaceRaw.Value != nil {
+			if addrRaw, ok := entry.Properties["address"]; ok && addrRaw.Value != nil {
+				if addrStr, ok := addrRaw.Value.(string); ok && addrStr != "" {
+					network := computeNetwork(addrStr)
+					if network != "" {
+						m.routeManager.RemoveConnectedRoute(network)
+					}
+				}
+			}
+		}
+	}
+
 	delete(m.entries, id)
 	return nil
 }
@@ -316,6 +356,20 @@ func (m *IPAddressModule) Get(id string) (core.Entry, bool) {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+// computeNetwork derives the network address from an IP address in CIDR notation.
+// e.g., "192.168.1.1/24" -> "192.168.1.0/24"
+// Returns empty string if parsing fails.
+func computeNetwork(addrCIDR string) string {
+	ip, ipNet, err := net.ParseCIDR(strings.TrimSpace(addrCIDR))
+	if err != nil {
+		return ""
+	}
+	_ = ip // suppress unused warning
+	ones, _ := ipNet.Mask.Size()
+	network := ipNet.IP.String()
+	return fmt.Sprintf("%s/%d", network, ones)
+}
 
 // coerceProperties sanitizes and coerces raw property values against the
 // module schema, returning the sanitized map or an error.

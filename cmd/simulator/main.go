@@ -12,8 +12,9 @@ import (
 	"github.com/Devaste/MikroLab/internal/cli"
 	"github.com/Devaste/MikroLab/internal/config"
 	"github.com/Devaste/MikroLab/internal/core"
-	"github.com/Devaste/MikroLab/internal/modules/interfaces"
+	interfaceMod "github.com/Devaste/MikroLab/internal/modules/interface"
 	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
+	routeMod "github.com/Devaste/MikroLab/internal/modules/ip/route"
 	"github.com/Devaste/MikroLab/internal/tree"
 )
 
@@ -34,10 +35,46 @@ func registerModules() (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to add /ip: %w", err)
 	}
 
-	// 3. Create a placeholder /interface checker with hardcoded interfaces.
-	ifaceModule := interfaces.NewDefault()
+	// 3. Load the /interface schema and create the interface module.
+	ifaceSchemaData, err := os.ReadFile("internal/modules/interface/schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read interface schema: %w", err)
+	}
+	ifaceSchema := &config.ModuleSchema{}
+	if err := json.Unmarshal(ifaceSchemaData, ifaceSchema); err != nil {
+		return nil, fmt.Errorf("failed to parse interface schema: %w", err)
+	}
 
-	// 4. Load the IP address schema from the JSON file.
+	ifaceModule, err := interfaceMod.New(ifaceSchema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create InterfaceModule: %w", err)
+	}
+
+	// Register /interface under root
+	if err := tree.Root.AddChild("interface", ifaceModule); err != nil {
+		return nil, fmt.Errorf("failed to register /interface: %w", err)
+	}
+
+	// 4. Load the IP route schema from the JSON file and create the route module.
+	routeSchemaData, err := os.ReadFile("internal/modules/ip/route/schema.json")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read route schema: %w", err)
+	}
+	routeSchema := &config.ModuleSchema{}
+	if err := json.Unmarshal(routeSchemaData, routeSchema); err != nil {
+		return nil, fmt.Errorf("failed to parse route schema: %w", err)
+	}
+
+	routeModule, err := routeMod.New(routeSchema, ifaceModule)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RouteModule: %w", err)
+	}
+
+	if err := ipDir.AddChild("route", routeModule); err != nil {
+		return nil, fmt.Errorf("failed to register /ip/route: %w", err)
+	}
+
+	// 5. Load the IP address schema from the JSON file.
 	schemaData, err := os.ReadFile("internal/modules/ip/address/schema.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read IP address schema: %w", err)
@@ -47,7 +84,7 @@ func registerModules() (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to parse IP address schema: %w", err)
 	}
 
-	ipAddrModule, err := ipAddr.New(schema, ifaceModule)
+	ipAddrModule, err := ipAddr.New(schema, ifaceModule, routeModule)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IPAddressModule: %w", err)
 	}
@@ -56,6 +93,9 @@ func registerModules() (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ip/address: %w", err)
 	}
 
+	// 6. Register modules in the lookup map
+	modules["/interface"] = ifaceModule
+	modules["/ip/route"] = routeModule
 	modules["/ip/address"] = ipAddrModule
 	return modules, nil
 }

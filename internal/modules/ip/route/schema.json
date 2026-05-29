@@ -1,0 +1,133 @@
+{
+  "path": "/ip/route",
+  "type": "list",
+  "title": "Routes",
+  "description": "Manages IPv4 routes.",
+  "flags": [
+    {
+      "letter": "A",
+      "name": "active",
+      "description": "Route is active (gateway reachable)."
+    },
+    {
+      "letter": "D",
+      "name": "dynamic",
+      "description": "Route is created dynamically (e.g., connected route)."
+    },
+    {
+      "letter": "X",
+      "name": "disabled",
+      "description": "Route is disabled."
+    },
+    {
+      "letter": "c",
+      "name": "connect",
+      "description": "Connected route (directly attached subnet)."
+    },
+    {
+      "letter": "s",
+      "name": "static",
+      "description": "Static route (user-added)."
+    }
+  ],
+  "schema": {
+    "dst-address": {
+      "type": "string",
+      "required": true,
+      "description": "Destination network in CIDR notation (e.g., 10.0.0.0/24)."
+    },
+    "gateway": {
+      "type": "string",
+      "required": true,
+      "description": "Gateway IP address or interface name."
+    },
+    "distance": {
+      "type": "integer",
+      "default": 1,
+      "min": 1,
+      "max": 255,
+      "description": "Administrative distance."
+    },
+    "pref-src": {
+      "type": "ipAddr",
+      "default": "",
+      "description": "Preferred source IP address."
+    },
+    "routing-table": {
+      "type": "string",
+      "default": "main",
+      "description": "Routing table this route belongs to."
+    },
+    "disabled": {
+      "type": "bool",
+      "default": false,
+      "description": "Whether the route is disabled."
+    },
+    "blackhole": {
+      "type": "bool",
+      "default": false,
+      "description": "If true, packets are silently dropped (gateway ignored)."
+    },
+    "check-gateway": {
+      "type": "string",
+      "default": "none",
+      "description": "Gateway monitoring method."
+    },
+    "immediate-gw": {
+      "type": "string",
+      "readOnly": true,
+      "description": "Resolved gateway IP address."
+    },
+    "local-address": {
+      "type": "ipAddr",
+      "readOnly": true,
+      "description": "Local address used for this route."
+    },
+    "dynamic": {
+      "type": "bool",
+      "readOnly": true,
+      "computedFrom": "gateway",
+      "description": "Whether the route is dynamic."
+    },
+    "active": {
+      "type": "bool",
+      "readOnly": true,
+      "description": "Whether the route is active (gateway reachable)."
+    }
+  },
+  "actions": {
+    "add": {
+      "parameters": ["dst-address", "gateway", "distance", "pref-src", "disabled", "blackhole", "routing-table", "check-gateway"],
+      "validators": ["valid_dst", "valid_gateway"],
+      "description": "Add a new route."
+    },
+    "set": {
+      "parameters": ["numbers", "dst-address", "gateway", "distance", "pref-src", "disabled", "blackhole", "routing-table", "check-gateway"],
+      "validators": ["entry_exists", "valid_dst", "valid_gateway"],
+      "description": "Modify properties of existing route(s)."
+    },
+    "remove": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists", "not_dynamic"],
+      "description": "Delete route(s)."
+    },
+    "print": {
+      "parameters": ["where", "detail", "follow"],
+      "output_formatter": "table",
+      "description": "Print route list."
+    }
+  },
+  "defaults": {
+    "distance": 1,
+    "pref-src": "",
+    "routing-table": "main",
+    "disabled": false,
+    "blackhole": false,
+    "check-gateway": "none"
+  },
+  "constraints": {
+    "valid_dst": "dst-address must be a valid CIDR notation.",
+    "valid_gateway": "gateway must be a valid IP address or existing interface name.",
+    "not_dynamic": "Cannot remove or modify a dynamic route."
+  }
+}

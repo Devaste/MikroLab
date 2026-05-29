@@ -15,13 +15,159 @@ type propertyColumn struct {
 	Width int    // minimum width for alignment
 }
 
-// knownColumns defines the columns to display for /ip/address and similar
-// list modules. In a future version, this could be derived from the schema.
-var knownColumns = []propertyColumn{
-	{Name: "address", Title: "ADDRESS", Width: 18},
-	{Name: "interface", Title: "INTERFACE", Width: 12},
-	{Name: "comment", Title: "COMMENT", Width: 20},
-	{Name: "disabled", Title: "DISABLED", Width: 2}, // shown as flag
+// columnsToExclude lists property names that should never appear as
+// table columns (they are either represented as flags or are internal).
+var columnsToExclude = map[string]bool{
+	"disabled":   true,
+	"running":    true,
+	"dynamic":    true,
+	"inactive":   true,
+	"actual-mtu": true,
+	"active":     true,
+}
+
+// columnDisplayNames maps property names to human-readable column headers.
+var columnDisplayNames = map[string]string{
+	"address":       "ADDRESS",
+	"interface":     "INTERFACE",
+	"name":          "NAME",
+	"default-name":  "DEFAULT-NAME",
+	"type":          "TYPE",
+	"mtu":           "MTU",
+	"l2mtu":         "L2MTU",
+	"mac-address":   "MAC-ADDRESS",
+	"comment":       "COMMENT",
+	"dst-address":   "DST-ADDRESS",
+	"gateway":       "GATEWAY",
+	"distance":      "DISTANCE",
+	"pref-src":      "PREF-SRC",
+	"routing-table": "ROUTING-TABLE",
+	"blackhole":     "BLACKHOLE",
+	"check-gateway": "CHECK-GATEWAY",
+	"immediate-gw":  "IMMEDIATE-GW",
+	"local-address": "LOCAL-ADDRESS",
+}
+
+// determineColumns derives the column list from the first available entry's
+// properties, excluding internal/flag properties and ordering known columns
+// before unknown ones.
+func determineColumns(entries []core.Entry) []propertyColumn {
+	if len(entries) == 0 {
+		// No entries — return a sensible default for the module type
+		return []propertyColumn{
+			{Name: "name", Title: "NAME", Width: 10},
+			{Name: "type", Title: "TYPE", Width: 6},
+			{Name: "comment", Title: "COMMENT", Width: 10},
+		}
+	}
+
+	// Collect all property names from the first entry
+	first := entries[0]
+	allProps := first.Properties()
+
+	// Build the column list: known columns first (in a preferred order),
+	// then any unknown columns alphabetically.
+	preferredOrder := []string{
+		"address", "interface", "name", "default-name", "type",
+		"mtu", "l2mtu", "mac-address", "comment",
+		"dst-address", "gateway", "distance",
+	}
+
+	var cols []propertyColumn
+	seen := make(map[string]bool)
+
+	// Add known columns in preferred order
+	for _, name := range preferredOrder {
+		if _, exists := allProps[name]; !exists {
+			continue
+		}
+		if columnsToExclude[name] {
+			continue
+		}
+		title := columnDisplayNames[name]
+		if title == "" {
+			title = strings.ToUpper(name)
+		}
+		width := len(title)
+		// Find the longest value
+		for _, entry := range entries {
+			if v, ok := entry.Property(name); ok && v != nil {
+				s := fmt.Sprintf("%v", v)
+				if len(s) > width {
+					width = len(s)
+				}
+			}
+		}
+		cols = append(cols, propertyColumn{Name: name, Title: title, Width: width})
+		seen[name] = true
+	}
+
+	// Add any remaining properties not in preferred order
+	var remaining []string
+	for name := range allProps {
+		if seen[name] || columnsToExclude[name] {
+			continue
+		}
+		remaining = append(remaining, name)
+	}
+	sort.Strings(remaining)
+	for _, name := range remaining {
+		title := columnDisplayNames[name]
+		if title == "" {
+			title = strings.ToUpper(name)
+		}
+		width := len(title)
+		for _, entry := range entries {
+			if v, ok := entry.Property(name); ok && v != nil {
+				s := fmt.Sprintf("%v", v)
+				if len(s) > width {
+					width = len(s)
+				}
+			}
+		}
+		cols = append(cols, propertyColumn{Name: name, Title: title, Width: width})
+	}
+
+	return cols
+}
+
+// formatFlagsLegend builds the flags legend line based on the first entry's flags.
+func formatFlagsLegend(entries []core.Entry) string {
+	if len(entries) == 0 {
+		return "Flags: X - disabled, I - invalid, D - dynamic, S - slave\n"
+	}
+
+	flags := entries[0].Flags()
+	if flags == nil {
+		return "Flags: X - disabled, I - invalid, D - dynamic, S - slave\n"
+	}
+
+	var parts []string
+
+	// Standard flags always shown
+	parts = append(parts, "X - disabled")
+	parts = append(parts, "I - invalid")
+	parts = append(parts, "D - dynamic")
+	parts = append(parts, "S - slave")
+
+	// Route-specific flags
+	if _, hasActive := flags["active"]; hasActive {
+		parts = append(parts, "A - active")
+	}
+	if _, hasConnect := flags["connect"]; hasConnect {
+		parts = append(parts, "c - connect")
+	}
+	if _, hasStatic := flags["static"]; hasStatic {
+		parts = append(parts, "s - static")
+	}
+	if _, hasRunning := flags["running"]; hasRunning {
+		parts = append(parts, "R - running")
+	}
+	if _, hasInactive := flags["inactive"]; hasInactive {
+		parts = append(parts, "I - inactive")
+	}
+
+	return "Flags: " + strings.Join(parts, ", ") + "\n"
 }
 
 // FormatTable formats a list of entries into a RouterOS-style aligned table.
@@ -36,7 +182,7 @@ func FormatTable(entries []core.Entry) string {
 	var b strings.Builder
 
 	// Print flags legend
-	b.WriteString("Flags: X - disabled, I - invalid, D - dynamic, S - slave\n")
+	b.WriteString(formatFlagsLegend(entries))
 
 	// Determine the width for the "#" column based on the number of entries
 	numWidth := 1
@@ -52,13 +198,13 @@ func FormatTable(entries []core.Entry) string {
 		numWidth = 1
 	}
 
+	// Determine columns dynamically from the first entry
+	columns := determineColumns(entries)
+
 	// Calculate dynamic column widths based on actual data
-	colWidths := make([]int, len(knownColumns))
-	for i, col := range knownColumns {
+	colWidths := make([]int, len(columns))
+	for i, col := range columns {
 		colWidths[i] = col.Width
-		if col.Name == "disabled" {
-			continue // flag column, fixed width
-		}
 		// Find the longest value
 		for _, entry := range entries {
 			if v, ok := entry.Property(col.Name); ok && v != nil {
@@ -76,10 +222,7 @@ func FormatTable(entries []core.Entry) string {
 		b.WriteByte(' ')
 	}
 	b.WriteString("  ")
-	for i, col := range knownColumns {
-		if col.Name == "disabled" {
-			continue // flags are shown in the # column area
-		}
+	for i, col := range columns {
 		b.WriteString(fmt.Sprintf("%-*s  ", colWidths[i], col.Title))
 	}
 	b.WriteString("\n")
@@ -93,10 +236,7 @@ func FormatTable(entries []core.Entry) string {
 		fmt.Fprintf(&b, " %s%-*d", flags, numWidth, entry.Index())
 
 		// Properties
-		for i, col := range knownColumns {
-			if col.Name == "disabled" {
-				continue
-			}
+		for i, col := range columns {
 			val := ""
 			if v, ok := entry.Property(col.Name); ok && v != nil {
 				val = fmt.Sprintf("%v", v)
@@ -118,6 +258,10 @@ func FormatTable(entries []core.Entry) string {
 //	I - invalid
 //	D - dynamic
 //	S - slave
+//	A - active
+//	c - connect
+//	s - static
+//	R - running
 func formatFlags(entry core.Entry) string {
 	flags := entry.Flags()
 	if flags == nil {
@@ -125,18 +269,35 @@ func formatFlags(entry core.Entry) string {
 	}
 
 	var b strings.Builder
-	if flags["disabled"] {
-		b.WriteByte('X')
-	} else {
-		b.WriteByte(' ')
-	}
-	if flags["invalid"] {
-		b.WriteByte('I')
+
+	// Standard flags
+	if flags["active"] {
+		b.WriteByte('A')
 	} else {
 		b.WriteByte(' ')
 	}
 	if flags["dynamic"] {
 		b.WriteByte('D')
+	} else {
+		b.WriteByte(' ')
+	}
+	if flags["disabled"] {
+		b.WriteByte('X')
+	} else {
+		b.WriteByte(' ')
+	}
+	if flags["connect"] {
+		b.WriteByte('c')
+	} else {
+		b.WriteByte(' ')
+	}
+	if flags["static"] {
+		b.WriteByte('s')
+	} else {
+		b.WriteByte(' ')
+	}
+	if flags["invalid"] {
+		b.WriteByte('I')
 	} else {
 		b.WriteByte(' ')
 	}
