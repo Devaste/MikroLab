@@ -1,58 +1,57 @@
 # RouterOS Simulator – Blueprint v0.1
 
-## Цель
-Создать духовного наследника Cisco Packet Tracer для устройств MikroTik — симулятор,
-полностью воспроизводящий поведение RouterOS v7 (LTS) без использования виртуализации.
+## Goal
+Create a spiritual successor to Cisco Packet Tracer for MikroTik devices — a simulator that fully reproduces the behavior of RouterOS v7 (LTS) without using virtualization.
 
-## Принципы
-- **Симуляция, не эмуляция:** пакетный движок повторяет путь трафика внутри одного устройства и между ними.
-- **Reflective Data Model:** CLI, GUI и WebFig — лишь представления единого конфигурационного дерева.
-- **Полная совместимость CLI:** скрипты, написанные для реальных устройств, должны выполняться без изменений.
-- **Локальный сервер + веб-интерфейс:** пользователь запускает один бинарник, UI доступен через браузер.
+## Core Principles
+- **Simulation, not emulation:** a packet engine mirrors the traffic path inside a single device and between devices.
+- **Reflective Data Model:** CLI, GUI and WebFig are merely views of a single configuration tree.
+- **Full CLI compatibility:** scripts written for real hardware must run unchanged.
+- **Local server + web UI:** user launches a single binary, the UI is accessed via browser.
 - **Open Source (AGPL v3).**
 
-## Архитектура
+## Architecture
 
-### Бэкенд (Go)
-- **Конфигурационное ядро:** in-memory дерево, отражающее структуру RouterOS (директории, списки, свойства).
-- **CLI-парсер и интерпретатор:** полная поддержка синтаксиса RouterOS (включая вложенные команды, переменные, `where`).
-- **Пакетный движок:** симуляция обработки пакетов (ARP, IP, firewall, NAT, connection tracking, маршрутизация).
-- **Топология:** граф устройств и линков, доставка пакетов между портами.
-- **API (WebSocket):** двусторонняя связь с UI – команды, обновления дерева, отладочные потоки.
+### Backend (Go)
+- **Configuration core:** in-memory tree reflecting RouterOS structure (directories, lists, properties).
+- **CLI parser and interpreter:** full support of RouterOS syntax (including nested commands, variables, `where` clauses).
+- **Packet engine:** simulation of packet processing (ARP, IP, firewall, NAT, connection tracking, routing).
+- **Topology:** graph of devices and links, delivering packets between ports.
+- **API (WebSocket):** bidirectional communication with the UI – commands, tree updates, debug streams.
 
-### Фронтенд (React)
-- **Canvas (React Flow):** визуальное построение сети.
-- **Popup-окна устройства:** вкладки CLI (xterm.js), GUI-конфигуратор (похожий на Webfig), возможно Winbox-подобный.
-- **Инструменты отладки:** sniffer, torch, ping (в реальном времени через поток событий).
+### Frontend (React)
+- **Canvas (React Flow):** visual network design.
+- **Device popup windows:** CLI (xterm.js), GUI configurator (Webfig-like), possibly Winbox-like.
+- **Debug tools:** sniffer, torch, ping (real-time via event stream).
 
-### Модульная система
-- Схемы модулей описываются в JSON: путь, тип узла, поля, валидаторы, действия (add, set, remove, print, ...).
-- Модули загружаются плагинами, что позволяет легко расширять систему.
-- Профили устройств (JSON) задают доступные порты, аппаратные возможности, поведение по умолчанию.
+### Modular System
+- Module schemas described in JSON: path, node type, fields, validators, actions (add, set, remove, print, …).
+- Modules loaded as plugins, enabling easy extension.
+- Device profiles (JSON) define available ports, hardware capabilities, default behavior.
 
-## Альфа-версия (MVP)
-- **Устройства:** минимум один профиль (например, hAP ax³).
-- **Возможности конфигурации:**
+## Alpha Version (MVP)
+- **Devices:** at least one profile (e.g., hAP ax³).
+- **Configuration capabilities:**
   - `/ip address`
-  - `/ip route` (статические + connected)
-  - `/ip firewall filter` (включая дефолтный набор правил)
+  - `/ip route` (static + connected)
+  - `/ip firewall filter` (including default rule set)
   - `/ip firewall nat` (masquerade, src-nat, dst-nat)
   - `/interface bridge`, `/interface bridge port`
-  - `/ip dhcp-server` (с лизами, make-static, опциями)
-- **CLI:** полная поддержка перечисленных команд, автодополнение, подсветка синтаксиса, выполнение скриптов.
-- **GUI:** табличное отображение и редактирование тех же сущностей.
-- **Топология:** создание нескольких устройств, соединение портов кабелями.
-- **Симуляция пакетов:** ping между устройствами, ARP, прохождение через firewall и NAT.
-- **Сохранение/загрузка проектов** (YAML).
+  - `/ip dhcp-server` (leases, make-static, options)
+- **CLI:** full support for listed commands, tab completion, syntax highlighting, script execution.
+- **GUI:** tabular display and editing of the same entities.
+- **Topology:** create multiple devices, connect ports with cables.
+- **Packet simulation:** ping between devices, ARP, traversal through firewall and NAT.
+- **Project save/load** (YAML).
 
-## Дорожная карта
-- **v0.2 – Углублённый функционал:** OSPF, VLAN, bonding, MPLS, VPLS, BGP.
-- **v0.3 – Профили реальных устройств** с аппаратными ограничениями.
-- **v1.0 – Полная совместимость с RouterOS 7 LTS**, поддержка беспроводных интерфейсов.
+## Roadmap
+- **v0.2 – Advanced features:** OSPF, VLAN, bonding, MPLS, VPLS, BGP.
+- **v0.3 – Real device profiles** with hardware constraints.
+- **v1.0 – Full RouterOS 7 LTS compatibility**, including wireless interfaces.
 
-## Технический стек
-- **Язык ядра:** Go 1.22+
-- **Фронтенд:** React 18+, TypeScript, React Flow, xterm.js
-- **Связь:** WebSocket (JSON-RPC), HTTP REST для экспорта/импорта
-- **Тестирование:** Go testing + testify, сценарные тесты на основе .rsc скриптов
-- **Лицензия:** AGPL v3
+## Tech Stack
+- **Core language:** Go 1.22+
+- **Frontend:** React 18+, TypeScript, React Flow, xterm.js
+- **Communication:** WebSocket (JSON-RPC), HTTP REST for export/import
+- **Testing:** Go testing + testify, scenario tests based on .rsc scripts
+- **License:** AGPL v3

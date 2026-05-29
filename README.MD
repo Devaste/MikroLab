@@ -1,47 +1,45 @@
 # RouterOS Simulator (ROS Lab)
 
-**Духовный наследник Cisco Packet Tracer для MikroTik.**
+**A spiritual successor to Cisco Packet Tracer for MikroTik.**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-> **Статус проекта:** Pre-Alpha (активная разработка архитектуры)
+> **Project status:** Pre-Alpha (active architecture design)
 
-## О проекте
-Цель — создать симулятор сети на устройствах MikroTik, который полностью воспроизводит поведение RouterOS v7 LTS. Вы сможете:
-- Проектировать сеть в визуальном редакторе (как в Packet Tracer).
-- Конфигурировать виртуальные роутеры через привычный CLI (идентичный реальному), Web-интерфейс или GUI.
-- Наблюдать за прохождением пакетов, использовать встроенные снифферы и отладку.
-- Писать и тестировать скрипты для автоматизации без риска поломать боевое оборудование.
+## About
+The goal is to create a network simulator for MikroTik devices that fully reproduces RouterOS v7 LTS behavior. You will be able to:
+- Design networks in a visual editor (like Packet Tracer).
+- Configure virtual routers via the familiar CLI (identical to the real one), web interface, or GUI.
+- Observe packet flow, use built-in sniffers and debugging tools.
+- Write and test automation scripts without risking real hardware.
 
-## Ключевые особенности
-- **Reflective Data Model:** единое конфигурационное дерево, CLI и GUI синхронизированы.
-- **Симуляция пакетов:** обработка трафика внутри виртуального устройства повторяет реальный RouterOS.
-- **Модульная архитектура:** новые протоколы и функции добавляются как плагины.
-- **Локальный запуск:** не требует серверов, работает на вашем компьютере, интерфейс в браузере.
-- **Совместимость с реальными скриптами:** импортируйте `.rsc` из вашего продакшена и проверяйте поведение.
+## Key Features
+- **Reflective Data Model:** single configuration tree, CLI and GUI stay in sync.
+- **Packet simulation:** packet processing inside a virtual device mirrors real RouterOS.
+- **Modular architecture:** new protocols and features are added as plugins.
+- **Local execution:** no external servers needed; runs on your machine, browser-based UI.
+- **Real script compatibility:** import `.rsc` from production and verify behavior.
 
-## Быстрый старт (будет доступен в первой альфе)
+## Quick Start (available in the first alpha)
 ```bash
-# Клонируйте репозиторий
+# Clone the repo
 git clone https://github.com/your-org/routeros-sim.git
 cd routeros-sim
 
-# Запустите сервер (порт 8080 по умолчанию)
+# Run the server (port 8080 by default)
 go run ./cmd/simulator
 
-# Откройте браузер
+# Open your browser
 http://localhost:8080
+```
 
-Участие в разработке
-Мы приветствуем любую помощь! Сейчас особенно нужны:
+## Contributing
+We welcome contributions! We especially need help with:
+- Reverse engineering RouterOS behavior (testing CLI on real devices).
+- Creating JSON schemas for new modules.
+- Testing and writing scenario scripts.
 
-Реверс-инжиниринг поведения RouterOS (тестирование CLI на реальном оборудовании).
+See CONTRIBUTING.md (coming soon).
 
-Создание JSON-схем для новых модулей.
-
-Тестирование и написание сценариев.
-
-См. CONTRIBUTING.md (скоро будет).
-
-Лицензия
-Проект распространяется под GNU Affero General Public License v3. Вы можете свободно использовать, изменять и распространять код, но обязаны открывать исходники производных работ.
+## License
+Distributed under the GNU Affero General Public License v3. You may freely use, modify, and distribute the code, but must open source derivative works.
