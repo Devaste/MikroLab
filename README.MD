@@ -69,6 +69,8 @@ internal/modules/
 
 > **Note:** The filesystem path is purely for code organization — the module's `Path()` method returns the runtime RouterOS path (e.g., `/ip/address`), which is used by `GetNode()` for tree traversal and is **independent** of where the `.go` files are stored.
 
+- **Strict WebSocket API** defined by JSON Schema (`api/schemas/`), with generated Go and TypeScript bindings and runtime validation on both sides.
+
 ### System Architecture
 
 ```
@@ -114,6 +116,23 @@ internal/modules/
 | **License** | [AGPL v3](./LICENSE) |
 
 See [`frontend/package.json`](frontend/package.json) for frontend dependencies (managed with `npm install` / `npm update`) and [`go.mod`](go.mod) for Go dependencies (managed with `go get` / `go mod tidy`). Full third-party license details in [`LICENSE-3RD-PARTY.MD`](LICENSE-3RD-PARTY.MD).
+
+## Development
+
+### Regenerating API Bindings
+
+After making changes to any schema in `api/schemas/`, regenerate the
+language bindings:
+
+```bash
+# Backend (Go structs + validator)
+cd backend
+go generate ./internal/api/...
+
+# Frontend (TypeScript interfaces)
+cd frontend
+npm run generate:api
+```
 
 ## Quick Start
 

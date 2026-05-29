@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://mikrolab.dev/schemas/CommandResponse.json",
+  "title": "CommandResponse",
+  "type": "object",
+  "properties": {
+    "id": { "type": "integer", "description": "Matches the request ID" },
+    "result": { "type": ["string", "object", "array", "null"], "description": "Command output (text table, structured data, or null)" },
+    "error": { "type": ["string", "null"], "description": "Error message if command failed" }
+  },
+  "required": ["id"]
+}

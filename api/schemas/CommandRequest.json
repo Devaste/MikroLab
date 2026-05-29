@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://mikrolab.dev/schemas/CommandRequest.json",
+  "title": "CommandRequest",
+  "type": "object",
+  "properties": {
+    "version": { "type": "string", "pattern": "^1\\.[0-9]+$", "description": "API version, e.g., '1.0'" },
+    "id": { "type": "integer", "minimum": 1, "description": "Request ID for correlating responses" },
+    "command": { "type": "string", "description": "RouterOS command path + action, e.g., '/ip/address/print'" },
+    "params": { "type": "object", "additionalProperties": true, "description": "Command parameters (key=value pairs)" }
+  },
+  "required": ["version", "id", "command"]
+}

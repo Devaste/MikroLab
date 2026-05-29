@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Devaste/MikroLab/internal/api"
 	"github.com/Devaste/MikroLab/internal/cli"
 	"github.com/Devaste/MikroLab/internal/config"
 	"github.com/Devaste/MikroLab/internal/core"
@@ -231,6 +232,29 @@ func main() {
 	fmt.Println("=== Simulator initialised ===")
 	fmt.Println()
 
+	// Start the WebSocket API server in a goroutine
+	wsAddr := ":8080"
+	if envAddr := os.Getenv("MIKROLAB_WS_ADDR"); envAddr != "" {
+		wsAddr = envAddr
+	}
+
+	wsServer, err := api.NewServer(wsAddr)
+	if err != nil {
+		fmt.Printf("ERROR: failed to create WebSocket server: %v\n", err)
+		return
+	}
+
+	go func() {
+		fmt.Printf("WebSocket API server starting on %s (ws://localhost%s/ws)\n", wsAddr, wsAddr)
+		if err := wsServer.Start(); err != nil {
+			fmt.Printf("WebSocket server error: %v\n", err)
+		}
+	}()
+
 	// Start the REPL
 	runREPL()
+
+	// Graceful shutdown
+	fmt.Println("Shutting down...")
+	wsServer.Stop()
 }

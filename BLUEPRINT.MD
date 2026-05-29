@@ -29,6 +29,35 @@ Create a spiritual successor to Cisco Packet Tracer for MikroTik devices — a s
 - **Device popup windows:** CLI (xterm.js), GUI configurator (Webfig-like), possibly Winbox-like.
 - **Debug tools:** sniffer, torch, ping (real-time via event stream).
 
+### API Contract
+
+All WebSocket messages between the frontend and backend are governed by a
+**strict, versioned contract** defined in `api/schemas/` as JSON Schema files:
+
+| Schema | Direction | Description |
+|---|---|---|
+| `CommandRequest.json` | Client → Server | Outgoing command invocations |
+| `CommandResponse.json` | Server → Client | Command results or errors |
+| `EventMessage.json` | Server → Client | Async events (log, packet, etc.) |
+
+**Code generation** produces native types on both sides:
+
+- **Go structs** via `go generate ./internal/api/...` (uses
+  [go-jsonschema](https://github.com/atombender/go-jsonschema)).
+- **TypeScript interfaces** via `npm run generate:api` in `frontend/` (uses
+  [json-schema-to-typescript](https://github.com/bcherny/json-schema-to-typescript)).
+
+**Runtime validation** at both ends ensures messages conform to the schema:
+
+- Go: [jsonschema](https://github.com/santhosh-tekuri/jsonschema) compiles
+  schemas once at startup, validates every incoming `CommandRequest`.
+- TypeScript: [AJV](https://ajv.js.org/) validates outgoing requests before
+  they are sent.
+
+**Versioning:** The `version` field in every request carries the API version.
+Breaking changes **must** increment the major version number (e.g., `"1.0"` →
+`"2.0"`). See `api/README.md` for the full versioning policy.
+
 ### Modular System
 - Each module is a **self-contained directory** under `internal/modules/` containing:
   - `schema.json` — module definition (paths, properties, actions, validators)
