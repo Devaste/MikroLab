@@ -18,6 +18,7 @@ import (
 	arpMod "github.com/Devaste/MikroLab/internal/modules/ip/arp"
 	routeMod "github.com/Devaste/MikroLab/internal/modules/ip/route"
 	pingMod "github.com/Devaste/MikroLab/internal/modules/ping"
+	"github.com/Devaste/MikroLab/internal/topology"
 	"github.com/Devaste/MikroLab/internal/tree"
 )
 
@@ -25,20 +26,18 @@ import (
 // Module loader
 // ---------------------------------------------------------------------------
 
-// registerModules builds the tree and registers all known modules.
-func registerModules() (map[string]core.Node, error) {
+// registerModulesOnTree builds the tree and registers all known modules
+// on the given tree root.
+func registerModulesOnTree(root *tree.TreeNode) (map[string]core.Node, error) {
 	modules := make(map[string]core.Node)
 
-	// 1. Create root /
-	tree.Root = tree.NewTreeNode("/", core.NodeTypeDirectory, "root")
-
-	// 2. Create /ip
+	// 1. Create /ip
 	ipDir := tree.NewTreeNode("/ip", core.NodeTypeDirectory, "IP")
-	if err := tree.Root.AddChild("ip", ipDir); err != nil {
+	if err := root.AddChild("ip", ipDir); err != nil {
 		return nil, fmt.Errorf("failed to add /ip: %w", err)
 	}
 
-	// 3. Load the /interface schema and create the interface module.
+	// 2. Load the /interface schema and create the interface module.
 	ifaceSchemaData, err := os.ReadFile("internal/modules/interface/schema.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read interface schema: %w", err)
@@ -54,11 +53,11 @@ func registerModules() (map[string]core.Node, error) {
 	}
 
 	// Register /interface under root
-	if err := tree.Root.AddChild("interface", ifaceModule); err != nil {
+	if err := root.AddChild("interface", ifaceModule); err != nil {
 		return nil, fmt.Errorf("failed to register /interface: %w", err)
 	}
 
-	// 4. Load the IP route schema from the JSON file and create the route module.
+	// 3. Load the IP route schema from the JSON file and create the route module.
 	routeSchemaData, err := os.ReadFile("internal/modules/ip/route/schema.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read route schema: %w", err)
@@ -77,7 +76,7 @@ func registerModules() (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ip/route: %w", err)
 	}
 
-	// 5. Load the IP address schema from the JSON file.
+	// 4. Load the IP address schema from the JSON file.
 	schemaData, err := os.ReadFile("internal/modules/ip/address/schema.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read IP address schema: %w", err)
@@ -96,7 +95,7 @@ func registerModules() (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ip/address: %w", err)
 	}
 
-	// 6. Load the ARP schema (optional, used for metadata only) and create module.
+	// 5. Load the ARP schema (optional, used for metadata only) and create module.
 	arpModInstance, err := arpMod.New("/ip/arp", "ARP Table", ifaceModule)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ArpModule: %w", err)
@@ -106,23 +105,36 @@ func registerModules() (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ip/arp: %w", err)
 	}
 
-	// 8. Create the ping command (registers under root, not /ip).
+	// 6. Create the ping command (registers under root, not /ip).
 	pingCmd, err := pingMod.New("/ping", "Ping", routeModule, arpModInstance)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PingCommand: %w", err)
 	}
 
-	if err := tree.Root.AddChild("ping", pingCmd); err != nil {
+	if err := root.AddChild("ping", pingCmd); err != nil {
 		return nil, fmt.Errorf("failed to register /ping: %w", err)
 	}
 
-	// 9. Register modules in the lookup map
+	// 7. Register modules in the lookup map
 	modules["/interface"] = ifaceModule
 	modules["/ip/route"] = routeModule
 	modules["/ip/address"] = ipAddrModule
 	modules["/ip/arp"] = arpModInstance
 	modules["/ping"] = pingCmd
 	return modules, nil
+}
+
+// registerModules builds the default tree and registers all known modules.
+// This is kept for backward compatibility.
+func registerModules() (map[string]core.Node, error) {
+	tree.Root = tree.NewTreeNode("/", core.NodeTypeDirectory, "root")
+	return registerModulesOnTree(tree.Root)
+}
+
+// populateDeviceTree registers modules on a device's tree.
+func populateDeviceTree(dev *topology.Device) error {
+	_, err := registerModulesOnTree(dev.Tree)
+	return err
 }
 
 // ---------------------------------------------------------------------------
@@ -194,7 +206,26 @@ func runREPL() {
 // ---------------------------------------------------------------------------
 
 func main() {
-	modules, err := registerModules()
+	// Create the topology manager
+	topo := topology.NewTopology()
+
+	// Create the default device "Router1"
+	defaultDevice, err := topo.CreateDeviceWithID("device-1", "Router1")
+	if err != nil {
+		fmt.Printf("ERROR: failed to create default device: %v\n", err)
+		return
+	}
+
+	// Populate the default device's tree with modules
+	if err := populateDeviceTree(defaultDevice); err != nil {
+		fmt.Printf("ERROR: failed to populate default device tree: %v\n", err)
+		return
+	}
+
+	// Set the global tree root for backward compatibility (REPL and existing code)
+	tree.Root = defaultDevice.Tree
+
+	modules, err := registerModulesOnTree(tree.Root)
 	if err != nil {
 		fmt.Printf("ERROR: %v\n", err)
 		return
@@ -243,6 +274,9 @@ func main() {
 		fmt.Printf("ERROR: failed to create WebSocket server: %v\n", err)
 		return
 	}
+
+	// Set the topology on the server (replaces the empty one created by NewServer)
+	wsServer.SetTopology(topo)
 
 	go func() {
 		fmt.Printf("WebSocket API server starting on %s (ws://localhost%s/ws)\n", wsAddr, wsAddr)

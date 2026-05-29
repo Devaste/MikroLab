@@ -3,20 +3,20 @@ package cli
 import (
 	"fmt"
 	"strings"
+
+	"github.com/Devaste/MikroLab/internal/tree"
 )
 
 // ExecuteAPI executes a RouterOS command from structured API parameters.
 //
 // It reconstructs a CLI string from the command path and params, then
-// delegates to the existing Parse/Execute pipeline. This keeps the existing
-// CLI parser unchanged while providing a clean API entry point.
-//
-// For commands without params (e.g., "/ip/address/print"), the command
-// string is used as-is.
-//
-// For commands with params (e.g., "/ip/address/add", {"address": "..."}),
-// param keys are reconstructed in "key=value" format.
+// delegates to the existing Parse/Execute pipeline.
 func ExecuteAPI(cmd string, params map[string]interface{}) (interface{}, error) {
+	return ExecuteAPIOnTree(cmd, params, &Context{Root: tree.Root})
+}
+
+// ExecuteAPIOnTree executes a RouterOS command on a specific device tree.
+func ExecuteAPIOnTree(cmd string, params map[string]interface{}, ctx *Context) (interface{}, error) {
 	// Reconstruct the CLI string
 	cliStr := reconstructCommand(cmd, params)
 
@@ -26,8 +26,8 @@ func ExecuteAPI(cmd string, params map[string]interface{}) (interface{}, error) 
 		return nil, fmt.Errorf("failed to parse command: %w", err)
 	}
 
-	// Execute through the existing pipeline
-	output, err := Execute(parsed)
+	// Execute through the existing pipeline on the given tree
+	output, err := ExecuteOnTree(parsed, ctx)
 	if err != nil {
 		return nil, err
 	}

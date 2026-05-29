@@ -18,6 +18,19 @@ interface PendingRequest {
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
+export interface TopologyDevice {
+  id: string;
+  name: string;
+}
+
+export interface TopologyLink {
+  id: string;
+  deviceA: string;
+  interfaceA: string;
+  deviceB: string;
+  interfaceB: string;
+}
+
 /**
  * WebSocket client for the MikroLab API with auto-reconnect support.
  *
@@ -189,11 +202,13 @@ export class ApiClient {
 
   /**
    * Send a command and wait for a matching response.
+   * Optionally specify a deviceId to target a specific device.
    */
   async sendCommand(
     command: string,
     params?: Record<string, unknown>,
-    timeoutMs: number = 10000
+    timeoutMs: number = 10000,
+    deviceId?: string,
   ): Promise<CommandResponse> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Not connected');
@@ -205,6 +220,7 @@ export class ApiClient {
       id,
       command,
       params,
+      deviceId,
     };
 
     // Validate outgoing request against schema
@@ -227,6 +243,66 @@ export class ApiClient {
       this.ws!.send(JSON.stringify(request));
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // Topology management convenience methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create a new device in the topology.
+   */
+  async createDevice(name: string): Promise<CommandResponse> {
+    return this.sendCommand('topology/create-device', { name });
+  }
+
+  /**
+   * Delete a device from the topology.
+   */
+  async deleteDevice(deviceId: string): Promise<CommandResponse> {
+    return this.sendCommand('topology/delete-device', { deviceId });
+  }
+
+  /**
+   * List all devices in the topology.
+   */
+  async listDevices(): Promise<CommandResponse> {
+    return this.sendCommand('topology/list-devices');
+  }
+
+  /**
+   * Connect two devices via their interfaces.
+   */
+  async connectDevices(
+    deviceA: string,
+    interfaceA: string,
+    deviceB: string,
+    interfaceB: string,
+  ): Promise<CommandResponse> {
+    return this.sendCommand('topology/connect', {
+      deviceA,
+      interfaceA,
+      deviceB,
+      interfaceB,
+    });
+  }
+
+  /**
+   * Disconnect a link.
+   */
+  async disconnectLink(linkId: string): Promise<CommandResponse> {
+    return this.sendCommand('topology/disconnect', { linkId });
+  }
+
+  /**
+   * List all links in the topology.
+   */
+  async listLinks(): Promise<CommandResponse> {
+    return this.sendCommand('topology/list-links');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Events
+  // ---------------------------------------------------------------------------
 
   /**
    * Register an event handler for a specific event type.

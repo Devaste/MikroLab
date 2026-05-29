@@ -44,9 +44,10 @@ Think of it as **Cisco Packet Tracer, but for MikroTik** — design complex netw
 
 | Component | Status |
 |---|---|
-| Backend (Go) | Architecture defined, initial modules scaffolded |
-| Frontend (React + TS) | Scaffolded (`frontend/package.json`), structure planned |
-| API (WebSocket) | Versioning strategy documented |
+| Backend (Go) | Architecture defined, modules scaffolded, topology manager implemented |
+| Frontend (React + TS) | Implemented with React Flow canvas and device terminals |
+| API (WebSocket) | Versioning strategy documented, deviceId + topology commands supported |
+| Topology | Multi-device support with virtual links and packet forwarding |
 | MVP features | Roadmap defined in BLUEPRINT.MD |
 
 ## Architecture Overview
@@ -76,28 +77,25 @@ internal/modules/
 ```
 ┌─────────────────────────────────────────────┐
 │              Browser (React UI)             │
-│  ┌─────────┐ ┌──────────┐ ┌──────────────┐  │
-│  │ Canvas  │ │ CLI      │ │ GUI / WebFig │  │
-│  │ (React  │ │ (xterm)  │ │ (React Flow) │  │
-│  │  Flow)  │ │          │ │              │  │
-│  └────┬────┘ └────┬─────┘ └──────┬───────┘  │
-│       └───────────┼──────────────┘          │
-└───────────────────┼─────────────────────────┘
-                    │ WebSocket (JSON-RPC + API versioning)
-┌───────────────────┼──────────────────────────┐
-│  ┌────────────────┴──────────────────────┐   │
-│  │         Go Backend Server             │   │
-│  │  ┌──────────┐  ┌──────────────────┐   │   │
-│  │  │ CLI      │  │ Configuration    │   │   │
-│  │  │ Parser   │  │ Tree (in-memory) │   │   │
-│  │  └──────────┘  └──────────────────┘   │   │
-│  │  ┌──────────┐  ┌──────────────────┐   │   │
-│  │  │ Packet   │  │ Module System    │   │   │
-│  │  │ Engine   │  │ (Plugins)        │   │   │
-│  │  └──────────┘  └──────────────────┘   │   │
-│  │  ┌──────────────────────────────┐     │   │
-│  │  │  Topology Graph + Links      │     │   │
-│  │  └──────────────────────────────┘     │   │
+│  ┌─────────────────┐ ┌───────────────────┐  │
+│  │   Topology      │ │  Device Terminal  │  │
+│  │   Canvas        │ │  (xterm.js)       │  │
+│  │  (React Flow)   │ │  deviceId → WS    │  │
+│  └────────┬────────┘ └─────────┬─────────┘  │
+│           └────────────────────┘            │
+└───────────────────────┼─────────────────────┘
+                        │ WebSocket (deviceId-aware)
+┌───────────────────────┼──────────────────────┐
+│  ┌────────────────────┴──────────────────┐   │
+│  │   Go Backend Server                   │   │
+│  │  ┌──────────┐ ┌──────────────────┐    │   │
+│  │  │CLI Parser│ │ Topology Manager │    │   │
+│  │  └──────────┘ │  /topology/*     │    │   │
+│  │  ┌──────────┐ └──────────────────┘    │   │
+│  │  │ Packet   │ ┌──────────────────┐    │   │
+│  │  │ Router   │ │ Per-Device       │    │   │
+│  │  │ (MVP)    │ │ Config Trees     │    │   │
+│  │  └──────────┘ └──────────────────┘    │   │
 │  └───────────────────────────────────────┘   │
 └──────────────────────────────────────────────┘
 ```
@@ -133,6 +131,39 @@ go generate ./internal/api/...
 cd frontend
 npm run generate:api
 ```
+
+## Multi-Device Topology
+
+MikroLab now supports creating multiple virtual RouterOS devices and connecting them via virtual cables.
+
+### Backend
+- Each device has its own independent configuration tree (`internal/topology/device.go`)
+- The topology manager (`internal/topology/manager.go`) manages devices and links
+- Packet forwarding between devices is handled by the topology's `SendPacket()` method
+- For MVP, ICMP echo requests generate automatic replies (no full packet engine yet)
+
+### Frontend
+- **Topology Canvas** (`TopologyCanvas.tsx`): React Flow canvas with custom device nodes, animated link edges, zoom/pan/minimap
+- **Device Terminal** (`DeviceTerminal.tsx`): xterm.js terminal for each device, commands routed via `deviceId` in WebSocket requests
+- **Split Layout**: 60% canvas / 40% terminal (right panel shows the selected device's CLI)
+
+### API
+The `CommandRequest` schema now includes an optional `deviceId` field:
+```json
+{
+  "version": "1.0",
+  "id": 1,
+  "command": "/ip/address/print",
+  "deviceId": "device-1"
+}
+```
+Topology management commands are sent via the same WebSocket:
+- `topology/create-device` — create a new device
+- `topology/delete-device` — delete a device
+- `topology/list-devices` — list all devices
+- `topology/connect` — connect two devices via their interfaces
+- `topology/disconnect` — remove a link
+- `topology/list-links` — list all links
 
 ## Quick Start
 

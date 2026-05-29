@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/Devaste/MikroLab/internal/cli"
+	"github.com/Devaste/MikroLab/internal/topology"
 	"github.com/gorilla/websocket"
 )
 
@@ -48,6 +48,7 @@ type Server struct {
 	addr      string
 	upgrader  websocket.Upgrader
 	compiler  *Compiler
+	topology  *topology.Topology
 	clients   map[*client]bool
 	mu        sync.RWMutex
 	nextID    atomic.Int64
@@ -77,10 +78,22 @@ func NewServer(addr string) (*Server, error) {
 			},
 		},
 		compiler:  compiler,
+		topology:  topology.NewTopology(),
 		clients:   make(map[*client]bool),
 		broadcast: make(chan []byte, 256),
 		done:      make(chan struct{}),
 	}, nil
+}
+
+// SetTopology sets the topology manager for this server.
+// Used to inject the topology from main.go after creating the default device.
+func (s *Server) SetTopology(topo *topology.Topology) {
+	s.topology = topo
+}
+
+// Topology returns the server's topology manager.
+func (s *Server) Topology() *topology.Topology {
+	return s.topology
 }
 
 // Start begins listening for WebSocket connections on the configured address.
@@ -248,23 +261,33 @@ func (c *client) handleMessage(msg []byte) {
 
 	// Parse into structured request
 	var req struct {
-		Version string                 `json:"version"`
-		ID      int                    `json:"id"`
-		Command string                 `json:"command"`
-		Params  map[string]interface{} `json:"params,omitempty"`
+		Version  string                 `json:"version"`
+		ID       int                    `json:"id"`
+		Command  string                 `json:"command"`
+		Params   map[string]interface{} `json:"params,omitempty"`
+		DeviceID string                 `json:"deviceId,omitempty"`
 	}
 
 	if err := json.Unmarshal(msg, &req); err != nil {
-		// This shouldn't happen after validation, but handle defensively
 		c.sendError(-1, "invalid_json")
 		return
 	}
 
-	// Execute the command
-	result, err := cli.ExecuteAPI(req.Command, req.Params)
+	// Handle topology commands separately
+	if isTopologyCommand(req.Command) {
+		result, err := c.executeTopologyCommand(req.Command, req.Params)
+		if err != nil {
+			c.sendError(req.ID, err.Error())
+			return
+		}
+		c.sendResultJSON(req.ID, result)
+		return
+	}
+
+	// Route regular RouterOS commands to the target device
+	result, err := c.executeDeviceCommand(req.Command, req.Params, req.DeviceID)
 	if err != nil {
-		errStr := err.Error()
-		c.sendError(req.ID, errStr)
+		c.sendError(req.ID, err.Error())
 		return
 	}
 
@@ -275,6 +298,134 @@ func (c *client) handleMessage(msg []byte) {
 	}
 
 	c.sendResult(req.ID, resultStr)
+}
+
+// isTopologyCommand checks if the command is a topology management command.
+func isTopologyCommand(cmd string) bool {
+	topoCommands := map[string]bool{
+		"topology/create-device": true,
+		"topology/delete-device": true,
+		"topology/list-devices":  true,
+		"topology/connect":       true,
+		"topology/disconnect":    true,
+		"topology/list-links":    true,
+	}
+	return topoCommands[cmd]
+}
+
+// executeTopologyCommand handles topology management commands.
+func (c *client) executeTopologyCommand(cmd string, params map[string]interface{}) (interface{}, error) {
+	topo := c.server.topology
+
+	switch cmd {
+	case "topology/create-device":
+		name := "Router"
+		if params != nil {
+			if n, ok := params["name"]; ok {
+				if nameStr, ok := n.(string); ok && nameStr != "" {
+					name = nameStr
+				}
+			}
+		}
+		dev, err := topo.CreateDevice(name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create device: %w", err)
+		}
+		return map[string]interface{}{
+			"id":   dev.ID,
+			"name": dev.Name,
+		}, nil
+
+	case "topology/delete-device":
+		if params == nil {
+			return nil, fmt.Errorf("params required with deviceId")
+		}
+		deviceID, ok := params["deviceId"].(string)
+		if !ok || deviceID == "" {
+			return nil, fmt.Errorf("deviceId parameter required")
+		}
+		if err := topo.DeleteDevice(deviceID); err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "deleted", "deviceId": deviceID}, nil
+
+	case "topology/list-devices":
+		devices := topo.Devices()
+		result := make([]map[string]string, 0, len(devices))
+		for _, dev := range devices {
+			result = append(result, map[string]string{
+				"id":   dev.ID,
+				"name": dev.Name,
+			})
+		}
+		return result, nil
+
+	case "topology/connect":
+		if params == nil {
+			return nil, fmt.Errorf("params required with deviceA, interfaceA, deviceB, interfaceB")
+		}
+		deviceA, _ := params["deviceA"].(string)
+		ifaceA, _ := params["interfaceA"].(string)
+		deviceB, _ := params["deviceB"].(string)
+		ifaceB, _ := params["interfaceB"].(string)
+		if deviceA == "" || ifaceA == "" || deviceB == "" || ifaceB == "" {
+			return nil, fmt.Errorf("deviceA, interfaceA, deviceB, interfaceB are required")
+		}
+		if err := topo.Connect(deviceA, ifaceA, deviceB, ifaceB); err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "connected"}, nil
+
+	case "topology/disconnect":
+		if params == nil {
+			return nil, fmt.Errorf("params required with linkId")
+		}
+		linkID, ok := params["linkId"].(string)
+		if !ok || linkID == "" {
+			return nil, fmt.Errorf("linkId parameter required")
+		}
+		if err := topo.Disconnect(linkID); err != nil {
+			return nil, err
+		}
+		return map[string]string{"status": "disconnected"}, nil
+
+	case "topology/list-links":
+		links := topo.Links()
+		result := make([]map[string]string, 0, len(links))
+		for _, link := range links {
+			result = append(result, map[string]string{
+				"id":         link.ID,
+				"deviceA":    link.DeviceA,
+				"interfaceA": link.InterfaceA,
+				"deviceB":    link.DeviceB,
+				"interfaceB": link.InterfaceB,
+			})
+		}
+		return result, nil
+
+	default:
+		return nil, fmt.Errorf("unknown topology command: %s", cmd)
+	}
+}
+
+// executeDeviceCommand routes a RouterOS command to the appropriate device.
+func (c *client) executeDeviceCommand(cmd string, params map[string]interface{}, deviceID string) (interface{}, error) {
+	// Default to the first device if no deviceId specified
+	if deviceID == "" {
+		devices := c.server.topology.Devices()
+		// Find the first device
+		for _, dev := range devices {
+			return dev.ExecuteAPI(cmd, params)
+		}
+		return nil, fmt.Errorf("no devices available")
+	}
+
+	dev := c.server.topology.Device(deviceID)
+	if dev == nil {
+		return nil, fmt.Errorf("device %q not found", deviceID)
+	}
+
+	return dev.ExecuteAPI(cmd, params)
 }
 
 // sendError sends an error response to the client.
@@ -315,6 +466,33 @@ func (c *client) sendResult(id int, result string) {
 	case c.send <- data:
 	default:
 		log.Printf("Client send buffer full, dropping response")
+	}
+}
+
+// sendResultJSON sends a JSON result response to the client.
+func (c *client) sendResultJSON(id int, result interface{}) {
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		c.sendError(id, fmt.Sprintf("failed to marshal result: %v", err))
+		return
+	}
+
+	rawResult := json.RawMessage(resultBytes)
+	resp := rawResponse{
+		ID:     id,
+		Result: &rawResult,
+	}
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("Failed to marshal JSON response: %v", err)
+		return
+	}
+
+	select {
+	case c.send <- data:
+	default:
+		log.Printf("Client send buffer full, dropping JSON response")
 	}
 }
 

@@ -15,11 +15,46 @@ Create a spiritual successor to Cisco Packet Tracer for MikroTik devices — a s
 ### Backend (Go)
 - **Dependency management:** Go Modules (`go.mod` / `go.sum`) — standard `go get` / `go mod tidy` workflow.
 - **Configuration core:** in-memory tree built programmatically at startup — `main.go` creates directory nodes (e.g., `/`, `/ip`) and registers leaf modules via `AddChild()`.
-- **Tree traversal:** `GetNode(path)` resolves RouterOS paths by walking the in-memory tree; there is no static path-to-file mapping.
+- **Tree traversal:** `GetNode(path)` resolves RouterOS paths by walking the in-memory tree; there is no static path-to-file mapping. Per-device trees are supported via `GetNodeOnTree(root, path)` for multi-device topologies.
 - **CLI parser and interpreter:** full support of RouterOS syntax (including nested commands, variables, `where` clauses).
 - **Packet engine:** simulation of packet processing (ARP, IP, firewall, NAT, connection tracking, routing).
-- **Topology:** graph of devices and links, delivering packets between ports.
+- **Topology:** graph of devices and links, delivering packets between ports. See [Topology Section](#topology) below.
 - **API (WebSocket + versioning):** bidirectional communication with the UI – commands, tree updates, debug streams. All WebSocket messages (requests and responses) include a top-level `"version": "1.0"` field. The version is incremented on any breaking change to the message schema. The client sends its expected version on connect; if the server does not support it, it sends a `version_mismatch` error and closes the connection.
+  - **deviceId support:** Each `CommandRequest` may include an optional `deviceId` field to target a specific device. When omitted, the command is routed to the first available device.
+  - **Topology commands:** The API supports topology management commands (e.g., `topology/create-device`, `topology/connect`, `topology/list-devices`).
+
+## Topology
+
+### Backend (`internal/topology/`)
+The topology manager provides multi-device simulation:
+
+- **Device (`device.go`):** Each device has a unique ID, name, and its own independent configuration tree (`*tree.TreeNode`). Devices are created via `NewDevice(id, name, topology)` and can execute RouterOS commands against their private tree.
+- **Topology Manager (`manager.go`):** Manages a collection of devices and virtual links (cables). Key operations:
+  - `CreateDevice(name)` / `CreateDeviceWithID(id, name)` — create new simulator instances
+  - `DeleteDevice(id)` — remove a device and all its links
+  - `Connect(deviceA, ifaceA, deviceB, ifaceB)` — create a virtual cable between two interfaces
+  - `Disconnect(linkID)` — remove a cable
+  - `SendPacket(srcDeviceID, outIface, packet)` — route a packet through the topology
+- **Packet (`packet.go`):** Minimal packet struct with `SrcIP`, `DstIP`, `Protocol`, `Payload`. For MVP, the topology handles ICMP echo requests by generating echo replies (no full packet engine yet).
+- **CLI Context (`internal/cli/context.go`):** Each device has a `cli.Context` that holds a reference to its tree root, allowing `ExecuteOnTree()` to operate on the correct device.
+
+### Frontend (`frontend/src/components/`)
+- **TopologyCanvas (`TopologyCanvas.tsx`):** React Flow canvas showing devices as custom nodes and links as animated edges. Supports:
+  - Add/delete devices
+  - Connect devices via drag-and-drop (defaults to `ether1` on both sides)
+  - Select devices (click) and open terminals (double-click)
+  - Refresh, zoom/pan, minimap
+- **DeviceTerminal (`DeviceTerminal.tsx`):** xterm.js terminal for a specific device. All commands are sent with the device's `deviceId` in the WebSocket request.
+
+### API Commands
+| Command | Params | Description |
+|---|---|---|
+| `topology/create-device` | `{ name: string }` | Create a new device |
+| `topology/delete-device` | `{ deviceId: string }` | Delete a device |
+| `topology/list-devices` | — | List all devices |
+| `topology/connect` | `{ deviceA, interfaceA, deviceB, interfaceB }` | Connect two devices |
+| `topology/disconnect` | `{ linkId: string }` | Disconnect a link |
+| `topology/list-links` | — | List all links |
 
 ### Frontend (React + TypeScript)
 - **Dependency management:** npm (`frontend/package.json` / `frontend/package-lock.json`) — standard `npm install` / `npm update` workflow.

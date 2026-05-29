@@ -9,13 +9,23 @@ import (
 	"github.com/Devaste/MikroLab/internal/tree"
 )
 
-// Execute parses and runs a single command against the configuration tree.
-//
-// It uses tree.GetNode to resolve the path, checks that the node implements
-// core.SettingsDirectory or core.Command, and performs the requested action.
+// Execute parses and runs a single command against the global configuration tree.
 func Execute(cmd ParsedCommand) (string, error) {
+	return ExecuteOnTree(cmd, &Context{Root: tree.Root})
+}
+
+// ExecuteOnTree parses and runs a single command against the given device tree.
+//
+// It uses tree.GetNodeOnTree to resolve the path, checks that the node implements
+// core.SettingsDirectory or core.Command, and performs the requested action.
+func ExecuteOnTree(cmd ParsedCommand, ctx *Context) (string, error) {
 	// 1. Resolve the path
-	node := tree.GetNode(cmd.Path)
+	var node core.Node
+	if ctx != nil && ctx.Root != nil {
+		node = tree.GetNodeOnTree(ctx.Root, cmd.Path)
+	} else {
+		node = tree.GetNode(cmd.Path)
+	}
 	if node == nil {
 		return "", fmt.Errorf("failure: path %q not found", cmd.Path)
 	}

@@ -6,8 +6,9 @@
   "properties": {
     "version": { "type": "string", "pattern": "^1\\.[0-9]+$", "description": "API version, e.g., '1.0'" },
     "id": { "type": "integer", "minimum": 1, "description": "Request ID for correlating responses" },
-    "command": { "type": "string", "description": "RouterOS command path + action, e.g., '/ip/address/print'" },
-    "params": { "type": "object", "additionalProperties": true, "description": "Command parameters (key=value pairs)" }
+    "command": { "type": "string", "description": "RouterOS command path + action, e.g., '/ip/address/print' or topology command like 'topology/create-device'" },
+    "params": { "type": "object", "additionalProperties": true, "description": "Command parameters (key=value pairs)" },
+    "deviceId": { "type": "string", "description": "Optional device ID to target. If omitted, uses the default device." }
   },
   "required": ["version", "id", "command"]
 }

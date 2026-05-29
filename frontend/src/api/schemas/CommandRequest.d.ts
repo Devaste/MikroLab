@@ -15,7 +15,7 @@ export interface CommandRequest {
    */
   id: number;
   /**
-   * RouterOS command path + action, e.g., '/ip/address/print'
+   * RouterOS command path + action, e.g., '/ip/address/print' or topology command
    */
   command: string;
   /**
@@ -24,5 +24,9 @@ export interface CommandRequest {
   params?: {
     [k: string]: unknown;
   };
+  /**
+   * Optional device ID to target. If omitted, uses the default device.
+   */
+  deviceId?: string;
   [k: string]: unknown;
 }
