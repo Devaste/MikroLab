@@ -148,10 +148,21 @@ func formatFlagsLegend(entries []core.Entry) string {
 	parts = append(parts, "X - disabled")
 	parts = append(parts, "I - invalid")
 	parts = append(parts, "D - dynamic")
-	parts = append(parts, "S - slave")
 
-	// Route-specific flags
-	if _, hasActive := flags["active"]; hasActive {
+	// Check for module-specific flags on the first entry
+	if _, hasH := flags["dhcp"]; hasH {
+		parts = append(parts, "H - dhcp")
+	}
+	if _, hasP := flags["published"]; hasP {
+		parts = append(parts, "P - published")
+	}
+	if _, hasC := flags["complete"]; hasC {
+		parts = append(parts, "C - complete")
+	}
+	if _, hasS := flags["slave"]; hasS {
+		parts = append(parts, "S - slave")
+	}
+	if _, hasA := flags["active"]; hasA {
 		parts = append(parts, "A - active")
 	}
 	if _, hasConnect := flags["connect"]; hasConnect {
@@ -249,6 +260,24 @@ func FormatTable(entries []core.Entry) string {
 	return b.String()
 }
 
+// flagLetter maps flag names to their RouterOS display letters.
+var flagLetters = map[string]byte{
+	"disabled":  'X',
+	"dynamic":   'D',
+	"invalid":   'I',
+	"slave":     'S',
+	"active":    'A',
+	"connect":   'c',
+	"static":    's',
+	"published": 'P',
+	"complete":  'C',
+}
+
+// flagRenderOrder defines the order in which flags are rendered.
+var flagRenderOrder = []string{
+	"active", "dynamic", "disabled", "connect", "static", "invalid", "slave",
+}
+
 // formatFlags returns a string of flag characters for an entry.
 // Spaces are used for flags that are not set.
 //
@@ -262,6 +291,8 @@ func FormatTable(entries []core.Entry) string {
 //	c - connect
 //	s - static
 //	R - running
+//	P - published
+//	C - complete
 func formatFlags(entry core.Entry) string {
 	flags := entry.Flags()
 	if flags == nil {
@@ -270,41 +301,32 @@ func formatFlags(entry core.Entry) string {
 
 	var b strings.Builder
 
-	// Standard flags
-	if flags["active"] {
-		b.WriteByte('A')
-	} else {
-		b.WriteByte(' ')
+	// Use the standard order for common flags
+	for _, name := range flagRenderOrder {
+		if letter, ok := flagLetters[name]; ok {
+			if flags[name] {
+				b.WriteByte(letter)
+			} else {
+				b.WriteByte(' ')
+			}
+		}
 	}
-	if flags["dynamic"] {
-		b.WriteByte('D')
-	} else {
-		b.WriteByte(' ')
-	}
-	if flags["disabled"] {
-		b.WriteByte('X')
-	} else {
-		b.WriteByte(' ')
-	}
-	if flags["connect"] {
-		b.WriteByte('c')
-	} else {
-		b.WriteByte(' ')
-	}
-	if flags["static"] {
-		b.WriteByte('s')
-	} else {
-		b.WriteByte(' ')
-	}
-	if flags["invalid"] {
-		b.WriteByte('I')
-	} else {
-		b.WriteByte(' ')
-	}
-	if flags["slave"] {
-		b.WriteByte('S')
-	} else {
-		b.WriteByte(' ')
+
+	// Append any module-specific flags not in the standard order
+	moduleFlags := []string{"published", "complete", "dhcp"}
+	for _, name := range moduleFlags {
+		if val, exists := flags[name]; exists {
+			if val {
+				if letter, ok := flagLetters[name]; ok {
+					b.WriteByte(letter)
+				} else {
+					// Fallback: just show the first letter
+					if len(name) > 0 {
+						b.WriteByte(name[0] - 32) // uppercase first char
+					}
+				}
+			}
+		}
 	}
 
 	return b.String()

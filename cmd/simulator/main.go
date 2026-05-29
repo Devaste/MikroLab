@@ -14,6 +14,7 @@ import (
 	"github.com/Devaste/MikroLab/internal/core"
 	interfaceMod "github.com/Devaste/MikroLab/internal/modules/interface"
 	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
+	arpMod "github.com/Devaste/MikroLab/internal/modules/ip/arp"
 	routeMod "github.com/Devaste/MikroLab/internal/modules/ip/route"
 	"github.com/Devaste/MikroLab/internal/tree"
 )
@@ -93,10 +94,21 @@ func registerModules() (map[string]core.Node, error) {
 		return nil, fmt.Errorf("failed to register /ip/address: %w", err)
 	}
 
-	// 6. Register modules in the lookup map
+	// 6. Load the ARP schema (optional, used for metadata only) and create module.
+	arpModInstance, err := arpMod.New("/ip/arp", "ARP Table", ifaceModule)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ArpModule: %w", err)
+	}
+
+	if err := ipDir.AddChild("arp", arpModInstance); err != nil {
+		return nil, fmt.Errorf("failed to register /ip/arp: %w", err)
+	}
+
+	// 7. Register modules in the lookup map
 	modules["/interface"] = ifaceModule
 	modules["/ip/route"] = routeModule
 	modules["/ip/address"] = ipAddrModule
+	modules["/ip/arp"] = arpModInstance
 	return modules, nil
 }
 
