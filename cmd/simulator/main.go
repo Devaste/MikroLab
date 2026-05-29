@@ -1,106 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
+	"github.com/Devaste/MikroLab/internal/cli"
 	"github.com/Devaste/MikroLab/internal/config"
 	"github.com/Devaste/MikroLab/internal/core"
 	"github.com/Devaste/MikroLab/internal/modules/interfaces"
 	ipAddr "github.com/Devaste/MikroLab/internal/modules/ip/address"
+	"github.com/Devaste/MikroLab/internal/tree"
 )
-
-// ---------------------------------------------------------------------------
-// Concrete treeNode: implements core.Directory
-// ---------------------------------------------------------------------------
-
-// treeNode is a concrete directory node that implements core.Directory.
-// It stores child nodes in a map and satisfies all interfaces needed to
-// build the configuration tree.
-type treeNode struct {
-	path     string
-	nodeType core.NodeType
-	title    string
-	children map[string]core.Node
-}
-
-func newTreeNode(path string, nodeType core.NodeType, title string) *treeNode {
-	return &treeNode{
-		path:     path,
-		nodeType: nodeType,
-		title:    title,
-		children: make(map[string]core.Node),
-	}
-}
-
-// core.Node interface
-func (n *treeNode) Path() string        { return n.path }
-func (n *treeNode) Type() core.NodeType { return n.nodeType }
-func (n *treeNode) Title() string       { return n.title }
-
-// core.Directory interface
-func (n *treeNode) Children() map[string]core.Node { return n.children }
-func (n *treeNode) Child(name string) (core.Node, bool) {
-	child, ok := n.children[name]
-	return child, ok
-}
-func (n *treeNode) AddChild(name string, child core.Node) error {
-	if _, exists := n.children[name]; exists {
-		return fmt.Errorf("child %q already exists under %q", name, n.path)
-	}
-	n.children[name] = child
-	return nil
-}
-func (n *treeNode) RemoveChild(name string) error {
-	if _, exists := n.children[name]; !exists {
-		return fmt.Errorf("child %q not found under %q", name, n.path)
-	}
-	delete(n.children, name)
-	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Compile-time checks
-// ---------------------------------------------------------------------------
-var _ core.Node = (*treeNode)(nil)
-var _ core.Directory = (*treeNode)(nil)
-
-// ---------------------------------------------------------------------------
-// Tree traversal
-// ---------------------------------------------------------------------------
-
-// rootNode holds the top-level / directory. It is set during initialization
-// and used by GetNode for path-based lookups.
-var rootNode *treeNode
-
-// GetNode traverses the configuration tree following the given path.
-// The path is split on "/" and each segment is resolved via Children().
-// Returns the node at the final path segment, or nil if not found.
-func GetNode(path string) core.Node {
-	path = strings.Trim(path, "/")
-	if path == "" {
-		return rootNode
-	}
-
-	segments := strings.Split(path, "/")
-	current := core.Node(rootNode)
-
-	for _, seg := range segments {
-		dir, ok := current.(core.Directory)
-		if !ok {
-			return nil // cannot descend into a non-directory node
-		}
-		child, found := dir.Child(seg)
-		if !found {
-			return nil
-		}
-		current = child
-	}
-
-	return current
-}
 
 // ---------------------------------------------------------------------------
 // Module loader
@@ -111,11 +26,11 @@ func registerModules() (map[string]core.Node, error) {
 	modules := make(map[string]core.Node)
 
 	// 1. Create root /
-	rootNode = newTreeNode("/", core.NodeTypeDirectory, "root")
+	tree.Root = tree.NewTreeNode("/", core.NodeTypeDirectory, "root")
 
 	// 2. Create /ip
-	ipDir := newTreeNode("/ip", core.NodeTypeDirectory, "IP")
-	if err := rootNode.AddChild("ip", ipDir); err != nil {
+	ipDir := tree.NewTreeNode("/ip", core.NodeTypeDirectory, "IP")
+	if err := tree.Root.AddChild("ip", ipDir); err != nil {
 		return nil, fmt.Errorf("failed to add /ip: %w", err)
 	}
 
@@ -146,6 +61,70 @@ func registerModules() (map[string]core.Node, error) {
 }
 
 // ---------------------------------------------------------------------------
+// REPL loop
+// ---------------------------------------------------------------------------
+
+// runREPL starts an interactive RouterOS-style command loop.
+func runREPL() {
+	scanner := bufio.NewScanner(os.Stdin)
+
+	// Set up a channel to catch Ctrl+C (SIGINT)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Goroutine to handle interrupt — when we get SIGINT, print a newline
+	// and return, breaking the REPL.
+	go func() {
+		<-sigCh
+		fmt.Println()
+		fmt.Println("Interrupted. Use 'exit' or 'quit' to exit.")
+		// We don't os.Exit here — the main loop will continue on next Scan()
+		// but bufio.Scanner won't recover from a partial read on Windows.
+		// For simplicity, we just print a message and let the user type exit.
+	}()
+
+	fmt.Println("MikroLab RouterOS Simulator v0.1")
+	fmt.Println("Type 'exit' or 'quit' to exit.")
+	fmt.Println()
+
+	for {
+		fmt.Print("[admin@MikroLab] > ")
+
+		if !scanner.Scan() {
+			// EOF or error — break out
+			break
+		}
+
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		// Check for exit/quit
+		if line == "exit" || line == "quit" {
+			fmt.Println("Exiting.")
+			break
+		}
+
+		// Parse the command
+		parsed, err := cli.Parse(line)
+		if err != nil {
+			fmt.Printf("failure: %v\n", err)
+			continue
+		}
+
+		// Execute the command
+		output, err := cli.Execute(parsed)
+		if err != nil {
+			fmt.Printf("%v\n", err)
+			continue
+		}
+
+		fmt.Print(output)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -167,7 +146,7 @@ func main() {
 	fmt.Println()
 	fmt.Println("--- Tree Traversal Tests ---")
 
-	// Verify traversal through GetNode
+	// Verify traversal through tree.GetNode
 	testPaths := []string{
 		"/",
 		"/ip",
@@ -177,7 +156,7 @@ func main() {
 	}
 
 	for _, p := range testPaths {
-		node := GetNode(p)
+		node := tree.GetNode(p)
 		if node != nil {
 			fmt.Printf("  %-30s → %s (%s)\n", p, node.Path(), node.Type())
 		} else {
@@ -185,61 +164,9 @@ func main() {
 		}
 	}
 
+	fmt.Println("=== Simulator initialised ===")
 	fmt.Println()
-	fmt.Println("--- IP Address Module Verification ---")
 
-	// Demonstrate IPAddressModule CRUD
-	mod, ok := modules["/ip/address"].(*ipAddr.IPAddressModule)
-	if !ok {
-		fmt.Println("ERROR: /ip/address is not an IPAddressModule")
-		return
-	}
-
-	// Add an entry
-	entry, err := mod.Add(map[string]interface{}{
-		"address":   "192.168.1.1/24",
-		"interface": "ether1",
-		"comment":   "LAN interface",
-	})
-	if err != nil {
-		fmt.Printf("ERROR adding entry: %v\n", err)
-		return
-	}
-	fmt.Printf("  Added:     ID=%s  address=%s  interface=%s\n",
-		entry.ID(), entry.Properties()["address"], entry.Properties()["interface"])
-
-	// Get the entry back
-	got, ok := mod.Get(entry.ID())
-	if !ok {
-		fmt.Println("ERROR: entry not found via Get")
-		return
-	}
-	fmt.Printf("  Get:       ID=%s  address=%s\n", got.ID(), got.Properties()["address"])
-
-	// List entries
-	entries := mod.List()
-	fmt.Printf("  List:      %d entries\n", len(entries))
-
-	// Try duplicate IP on same interface (should fail)
-	_, err = mod.Add(map[string]interface{}{
-		"address":   "192.168.1.1/24",
-		"interface": "ether1",
-	})
-	if err != nil {
-		fmt.Printf("  Duplicate: rejected (expected): %v\n", err)
-	} else {
-		fmt.Println("  Duplicate: allowed (unexpected)")
-	}
-
-	// Remove
-	if err := mod.Remove(entry.ID()); err != nil {
-		fmt.Printf("ERROR removing entry: %v\n", err)
-	} else {
-		fmt.Printf("  Removed:   ID=%s\n", entry.ID())
-		entries = mod.List()
-		fmt.Printf("  List:      %d entries after removal\n", len(entries))
-	}
-
-	fmt.Println()
-	fmt.Println("=== Done ===")
+	// Start the REPL
+	runREPL()
 }
