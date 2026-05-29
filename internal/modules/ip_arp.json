@@ -1,0 +1,126 @@
+{
+  "path": "/ip/arp",
+  "type": "list",
+  "title": "ARP Table",
+  "description": "Manages the ARP (Address Resolution Protocol) table entries for IP-to-MAC address resolution on router interfaces.",
+  "flags": [
+    {
+      "letter": "X",
+      "name": "disabled",
+      "description": "Entry is disabled."
+    },
+    {
+      "letter": "I",
+      "name": "invalid",
+      "description": "Configuration is invalid (e.g., missing interface)."
+    },
+    {
+      "letter": "H",
+      "name": "dhcp",
+      "description": "Entry created by DHCP snooping."
+    },
+    {
+      "letter": "D",
+      "name": "dynamic",
+      "description": "Entry dynamically learned via ARP."
+    },
+    {
+      "letter": "P",
+      "name": "published",
+      "description": "Entry is published; the router responds to ARP requests for this address."
+    },
+    {
+      "letter": "C",
+      "name": "complete",
+      "description": "Entry is complete and functional."
+    }
+  ],
+  "schema": {
+    "address": {
+      "type": "ipAddr",
+      "required": true,
+      "description": "IP address of the ARP entry."
+    },
+    "mac-address": {
+      "type": "macAddr",
+      "required": true,
+      "description": "MAC address associated with the ARP entry."
+    },
+    "interface": {
+      "type": "interface_enum",
+      "required": true,
+      "description": "Interface on which the ARP entry is learned or configured.",
+      "dynamicValues": true,
+      "ref": "/interface"
+    },
+    "published": {
+      "type": "bool",
+      "default": false,
+      "description": "Whether the entry is published (responds to ARP requests)."
+    },
+    "status": {
+      "type": "string",
+      "readOnly": true,
+      "description": "Current ARP entry status (e.g., reachable, stale, delay, probe, failed)."
+    },
+    "vrf": {
+      "type": "enum",
+      "dynamicValues": true,
+      "default": "main",
+      "readOnly": true,
+      "description": "VRF this ARP entry is associated with."
+    }
+  },
+  "actions": {
+    "add": {
+      "parameters": ["address", "mac-address", "interface", "published"],
+      "validators": [
+        "duplicate_arp_entry",
+        "interface_exists",
+        "valid_mac_address"
+      ],
+      "flags_set": ["disabled"],
+      "description": "Add a new static ARP entry."
+    },
+    "set": {
+      "parameters": ["numbers", "address", "mac-address", "interface", "published"],
+      "validators": ["entry_exists", "duplicate_arp_entry", "interface_exists"],
+      "description": "Modify properties of existing ARP entry(ies)."
+    },
+    "remove": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists", "not_dynamic"],
+      "description": "Delete ARP entry(ies)."
+    },
+    "print": {
+      "parameters": ["where", "detail", "follow"],
+      "output_formatter": "table",
+      "description": "Print ARP table."
+    },
+    "export": {
+      "parameters": ["compact"],
+      "output_formatter": "commands",
+      "description": "Export as CLI commands."
+    },
+    "disable": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists"],
+      "description": "Disable ARP entry(ies)."
+    },
+    "enable": {
+      "parameters": ["numbers"],
+      "validators": ["entry_exists"],
+      "description": "Enable disabled ARP entry(ies)."
+    }
+  },
+  "defaults": {
+    "published": false,
+    "disabled": false,
+    "vrf": "main"
+  },
+  "constraints": {
+    "duplicate_arp_entry": "Cannot add the same IP-MAC pair on the same interface.",
+    "interface_exists": "Interface must exist in /interface.",
+    "valid_mac_address": "MAC address must be a valid Ethernet MAC (e.g., 00:11:22:33:44:55)."
+  }
+}
